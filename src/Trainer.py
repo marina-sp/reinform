@@ -101,6 +101,7 @@ class Trainer():
                 current_decay *= self.option.decay_rate
                 current_decay_count = 0
 
+            # agent. __call__ from tf
             batch_size = start_entities.shape[0]
             prev_state = [torch.zeros(start_entities.shape[0], self.option.state_embed_size),
                           torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
