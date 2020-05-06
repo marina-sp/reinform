@@ -52,8 +52,10 @@ class Agent(nn.Module):
 
     def step(self, prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step):
         prev_action_embedding = self.relation_embedding(prev_relation)
+        # 1. one step of rnn
         output, new_state = self.policy_step(prev_action_embedding, prev_state)
 
+        # Get state vector
         actions_id = self.graph.get_out(current_entities, start_entities, queries, answers, all_correct, step)
         out_relations_id = actions_id[:, :, 0]
         out_entities_id = actions_id[:, :, 1]
@@ -63,23 +65,30 @@ class Agent(nn.Module):
         current_state = output.squeeze()
         queries_embedding = self.relation_embedding(queries)
         state_query = torch.cat([current_state, queries_embedding], -1)
-        output = self.policy_mlp(state_query)
 
+        # MLP for policy#
+        output = self.policy_mlp(state_query)
         prelim_scores = torch.sum(torch.mul(output, action), dim=-1)
+
+        # Masking PAD actions
         dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]
         mask = torch.eq(out_relations_id, dummy_relations_id)
         dummy_scores = torch.ones_like(prelim_scores) * (-99999)
         scores = torch.where(mask, dummy_scores, prelim_scores)
 
-        action_prob = torch.softmax(scores, dim=1)
+        # 4 sample action
+        action_prob = torch.exp(scores)  # pytorch multinomial requires non log probabilities
         action_id = torch.multinomial(action_prob, 1)
-        chosen_relation = torch.gather(out_relations_id, dim=1, index=action_id).squeeze()
 
+        # loss
+        # 5a.
         logits = torch.nn.functional.log_softmax(scores, dim=1)
         one_hot = torch.zeros_like(logits).scatter(1, action_id, 1)
         loss = - torch.sum(torch.mul(logits, one_hot), dim=1)
 
+        # 6. Map back to true id
         action_id = action_id.squeeze()
+        chosen_relation = torch.gather(out_relations_id, dim=1, index=action_id).squeeze()
         next_entities = self.graph.get_next(current_entities, action_id)
 
         sss = self.data_loader.num2relation[(int)(queries[0])] + "\t" + self.data_loader.num2relation[(int)(chosen_relation[0])]
