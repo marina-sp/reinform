@@ -87,8 +87,8 @@ class Agent(nn.Module):
         loss = - torch.sum(torch.mul(logits, one_hot), dim=1)
 
         # 6. Map back to true id
-        action_id = action_id.squeeze()
         chosen_relation = torch.gather(out_relations_id, dim=1, index=action_id).squeeze()
+        action_id = action_id.squeeze()
         next_entities = self.graph.get_next(current_entities, action_id)
 
         sss = self.data_loader.num2relation[(int)(queries[0])] + "\t" + self.data_loader.num2relation[(int)(chosen_relation[0])]
