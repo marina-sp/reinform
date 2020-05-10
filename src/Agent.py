@@ -67,10 +67,9 @@ class Agent(nn.Module):
         state_query = torch.cat([current_state, queries_embedding], -1)
 
         # MLP for policy#
-        output = self.policy_mlp(state_query)  # B x action_emb
-        output = output.unsqueeze(1)  # B x 1 x action_emb
+        output = self.policy_mlp(state_query)  # B x 1 x action_emb
         action = action.transpose(-1, -2) # B x action_emb x n_actions
-        prelim_scores = torch.bmm(output, action)  # B x n_actions
+        prelim_scores = torch.bmm(output, action).squeeze(1)  # B x n_actions
 
         # Masking PAD actions
         dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]  # B x n_actions
