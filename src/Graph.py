@@ -20,11 +20,14 @@ class Knowledge_graph():
             all_out_dict[head].append((relation, tail))
 
         all_correct = defaultdict(set)
+
+        # out array: batch size x max actions x 2 (entity, relation)
         out_array = np.ones((self.option.num_entity, self.option.max_out, 2), dtype=np.int64)
         out_array[:, :, 0] *= self.data_loader.relation2num["Pad"]
         out_array[:, :, 1] *= self.data_loader.entity2num["Pad"]
         more_out_count = 0
         for head in all_out_dict:
+            # 1st action reserved for: stay in the same state
             out_array[head, 0, 0] = self.data_loader.relation2num["Equal"]
             out_array[head, 0, 1] = head
             num_out = 1
@@ -43,13 +46,13 @@ class Knowledge_graph():
             self.out_array = self.out_array.cuda()
 
     # 获取从图谱上current_entities的out_relations, out_entities
-    def get_out(self, current_entities, start_entities, queries, answers, all_correct, step):
+    def get_out(self, current_entities, start_entities, query_relations, answers, all_correct, step):
         ret = copy.deepcopy(self.out_array[current_entities, :, :])
         for i in range(current_entities.shape[0]):
             if current_entities[i] == start_entities[i]:
                 relations = ret[i, :, 0]
                 entities = ret[i, :, 1]
-                mask = queries[i].eq(relations) & answers[i].eq(entities)
+                mask = query_relations[i].eq(relations) & answers[i].eq(entities)
                 #mask = queries[i].eq(relations)
                 ret[i, :, 0][mask] = self.data_loader.relation2num["Pad"]
                 ret[i, :, 1][mask] = self.data_loader.entity2num["Pad"]
@@ -65,6 +68,7 @@ class Knowledge_graph():
 
         return ret
 
+    # step to the next state; out_ids for actions to take
     def get_next(self, current_entities, out_ids):
         next_out = self.out_array[current_entities, :, :]
         next_out_list = list()
@@ -79,3 +83,7 @@ class Knowledge_graph():
         for i in range(start_entities_np.shape[0]):
             all_correct.append(self.all_correct[(start_entities_np[i], relations_np[i])])
         return all_correct
+
+    def update_all_correct(self, data):
+        for head, relation, tail in data:
+            self.all_correct[(head, relation)].add(tail)

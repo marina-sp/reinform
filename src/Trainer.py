@@ -151,6 +151,7 @@ class Trainer():
         with torch.no_grad():
             test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_test_graph_data())
             test_data = self.data_loader.get_test_data()
+            test_graph.update_all_correct(test_data)
             environment = Environment(self.option, test_graph, test_data, "test")
             self.agent.set_graph(test_graph)
 
