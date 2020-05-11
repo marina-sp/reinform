@@ -48,32 +48,32 @@ class Data_loader():
         print("num_relation", self.num_relation)
         print("num_entity", self.num_entity)
 
-        self.train_data = self._load_data(train_data_path)
-        self.valid_data = self._load_data(valid_data_path)
-        self.test_data = self._load_data(test_data_path)
+        self.train_data, self.inv_train_data = self._load_data(train_data_path)
+        self.valid_data, self.inv_valid_data = self._load_data(valid_data_path)
+        self.test_data, self.inv_test_data = self._load_data(test_data_path)
 
     def _load_data(self, path):
         data = [l.strip().split("\t") for l in open(path, "r").readlines()]
-        triplets = list()
+        triplets, inv_triplets = list(), list()
         for item in data:
             head = self.entity2num[item[0]]
             tail = self.entity2num[item[2]]
             relation = self.relation2num[item[1]]
             triplets.append([head, relation, tail])
-            if self.include_reverse:
-                inv_relation = self.relation2num["inv_" + item[1]]
-                triplets.append([tail, inv_relation, head])
-        return triplets
+            #if self.include_reverse:
+            inv_relation = self.relation2num["inv_" + item[1]]
+            inv_triplets.append([tail, inv_relation, head])
+        return triplets, inv_triplets
 
-    def _load_ddd(self, path):
-        data = [l.strip().split("\t") for l in open(path, "r").readlines()]
-        triplets = list()
-        for item in data:
-            head = self.entity2num[item[0]]
-            tail = self.entity2num[item[2]]
-            relation = self.relation2num[item[1]]
-            triplets.append([head, relation, tail])
-        return triplets
+    # def _load_ddd(self, path):
+    #     data = [l.strip().split("\t") for l in open(path, "r").readlines()]
+    #     triplets = list()
+    #     for item in data:
+    #         head = self.entity2num[item[0]]
+    #         tail = self.entity2num[item[2]]
+    #         relation = self.relation2num[item[1]]
+    #         triplets.append([head, relation, tail])
+    #     return triplets
 
     def _load_dict(self, path):
         obj2num = defaultdict(int)
@@ -95,6 +95,7 @@ class Data_loader():
             self.num2relation[num] = rel
             self.relation2inv[n] = num
             self.relation2inv[num] = n
+        assert len(temp) * 2 == len(self.relation2inv) == len(self.relation2num) == len(self.num2relation)
 
     def _add_item(self, obj2num, num2obj, item):
         count = len(obj2num)
@@ -103,20 +104,22 @@ class Data_loader():
 
     def get_train_graph_data(self):
         with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Train graph contains " + str(len(self.train_data)) + " triples\n")
-        return np.array(self.train_data, dtype=np.int64)
+            f.write("Train graph contains " + str(len(self.train_data + self.inv_train_data)) + " triples\n")
+        return np.array(self.train_data + self.inv_train_data, dtype=np.int64)
 
     def get_train_data(self):
+        train_data = self.train_data + self.inv_train_data if self.include_reverse else self.train_data
         with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Train data contains " + str(len(self.train_data)) + " triples\n")
-        return np.array(self.train_data, dtype=np.int64)
+            f.write("Train data contains " + str(len(train_data)) + " triples\n")
+        return np.array(train_data, dtype=np.int64)
 
     def get_test_graph_data(self):
         with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Test graph contains " + str(len(self.train_data)) + " triples\n")
-        return np.array(self.train_data, dtype=np.int64)
+            f.write("Test graph contains " + str(len(self.train_data + self.inv_train_data)) + " triples\n")
+        return np.array(self.train_data + self.inv_train_data, dtype=np.int64)
 
     def get_test_data(self):
+        test_data = self.test_data + self.inv_test_data if self.include_reverse else self.test_data
         with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Test graph contains " + str(len(self.test_data)) + " triples\n")
-        return np.array(self.test_data, dtype=np.int64)
+            f.write("Test graph contains " + str(len(test_data)) + " triples\n")
+        return np.array(test_data, dtype=np.int64)
