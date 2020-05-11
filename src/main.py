@@ -29,6 +29,7 @@ def main():
     # Dataset
     parser.add_argument('--datadir', default="../datasets", type=str)
     parser.add_argument('--dataset', default="WN18RR", type=str)
+    parser.add_argument('--use_inverse', default=False, type=bool)
 
     # Agent configuration
     parser.add_argument('--state_embed_size', default=50, type=int)
@@ -81,6 +82,7 @@ def main():
         option.action_embed_size = option.relation_embed_size + option.entity_embed_size
 
     option.save()
+    print(option.__dict__)
 
     data_loader = Data_loader(option)
     option.num_entity = data_loader.num_entity

@@ -7,7 +7,7 @@ import copy
 class Data_loader():
     def __init__(self, option):
         self.option = option
-        self.include_reverse = True
+        self.include_reverse = option.use_inverse
 
         self.train_data = None
         self.test_data = None
@@ -36,6 +36,8 @@ class Data_loader():
 
         self.entity2num, self.num2entity = self._load_dict(entity_path)
         self.relation2num, self.num2relation = self._load_dict(relations_path)
+        assert len(self.entity2num) == len(self.num2entity) == 40943
+        assert len(self.relation2num) == len(self.num2relation) == 11
         self._augment_reverse_relation()
         self._add_item(self.relation2num, self.num2relation, "Equal")
         self._add_item(self.relation2num, self.num2relation, "Pad")
