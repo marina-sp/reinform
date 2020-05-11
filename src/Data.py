@@ -36,8 +36,8 @@ class Data_loader():
 
         self.entity2num, self.num2entity = self._load_dict(entity_path)
         self.relation2num, self.num2relation = self._load_dict(relations_path)
-        assert len(self.entity2num) == len(self.num2entity) == 40943
-        assert len(self.relation2num) == len(self.num2relation) == 11
+        assert len(self.entity2num) == len(self.num2entity)
+        assert len(self.relation2num) == len(self.num2relation)
         self._augment_reverse_relation()
         self._add_item(self.relation2num, self.num2relation, "Equal")
         self._add_item(self.relation2num, self.num2relation, "Pad")
@@ -123,5 +123,11 @@ class Data_loader():
     def get_test_data(self):
         test_data = self.test_data + self.inv_test_data if self.include_reverse else self.test_data
         with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Test graph contains " + str(len(test_data)) + " triples\n")
+            f.write("Test data contains " + str(len(test_data)) + " triples\n")
         return np.array(test_data, dtype=np.int64)
+
+    def get_valid_data(self):
+        valid_data = self.valid_data + self.inv_valid_data if self.include_reverse else self.valid_data
+        with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
+            f.write("Valid data contains " + str(len(valid_data)) + " triples\n")
+        return np.array(valid_data, dtype=np.int64)

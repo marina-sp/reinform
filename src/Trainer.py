@@ -152,6 +152,7 @@ class Trainer():
             test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_test_graph_data())
             test_data = self.data_loader.get_test_data()
             test_graph.update_all_correct(test_data)
+            test_graph.update_all_correct(self.data_loader.get_valid_data())
             environment = Environment(self.option, test_graph, test_data, "test")
             self.agent.set_graph(test_graph)
 
@@ -178,6 +179,7 @@ class Trainer():
                     log_current_prob = log_current_prob.cuda()
 
                 for step in range(self.option.max_step_length):
+                    assert start_entities[0] == _start_entities[0]
                     if step == 0:
                         chosen_state, chosen_relation, chosen_entities, log_current_prob = \
                             self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
