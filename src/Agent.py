@@ -157,7 +157,7 @@ class Agent(nn.Module):
         self.graph = graph
 
     def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.relation2num["Strat"]
+        dummy_start_item = self.data_loader.relation2num["Start"]
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
