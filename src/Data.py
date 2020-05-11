@@ -39,14 +39,16 @@ class Data_loader():
         assert len(self.entity2num) == len(self.num2entity)
         assert len(self.relation2num) == len(self.num2relation)
         self._augment_reverse_relation()
+        self.num2relation[0] = "Unk"
+        self.num2entity[0] = "Unk"
         self._add_item(self.relation2num, self.num2relation, "Equal")
         self._add_item(self.relation2num, self.num2relation, "Pad")
         self._add_item(self.relation2num, self.num2relation, "Start")
         self._add_item(self.entity2num, self.num2entity, "Pad")
         print(self.relation2num)
 
-        self.num_relation = len(self.relation2num)
-        self.num_entity = len(self.entity2num)
+        self.num_relation = len(self.num2relation)
+        self.num_entity = len(self.num2entity)
         print("num_relation", self.num_relation)
         print("num_entity", self.num_entity)
 
@@ -54,10 +56,15 @@ class Data_loader():
         self.valid_data, self.inv_valid_data = self._load_data(valid_data_path)
         self.test_data, self.inv_test_data = self._load_data(test_data_path)
 
+        print("total seen relations", len(self.relation2num) - 3)
+        print("total seen entities", len(self.entity2num) - 1)
+
     def _load_data(self, path):
         data = [l.strip().split("\t") for l in open(path, "r").readlines()]
         triplets, inv_triplets = list(), list()
         for item in data:
+            if item[0] not in self.entity2num or item[2] not in self.entity2num:
+                pass  # print(path, " contains unknown entities")
             head = self.entity2num[item[0]]
             tail = self.entity2num[item[2]]
             relation = self.relation2num[item[1]]
@@ -77,13 +84,13 @@ class Data_loader():
     #         triplets.append([head, relation, tail])
     #     return triplets
 
-    def _load_dict(self, path):
+    def _load_dict(self, path, first_num=1):
         obj2num = defaultdict(int)
-        num2obj = defaultdict(str)
+        num2obj = dict()
         data = [l.strip() for l in open(path, "r").readlines()]
         for num, obj in enumerate(data):
-            obj2num[obj] = num
-            num2obj[num] = obj
+            obj2num[obj] = first_num + num
+            num2obj[first_num + num] = obj
         return obj2num, num2obj
 
     def _augment_reverse_relation(self):
@@ -100,7 +107,7 @@ class Data_loader():
         assert len(temp) * 2 == len(self.relation2inv) == len(self.relation2num) == len(self.num2relation)
 
     def _add_item(self, obj2num, num2obj, item):
-        count = len(obj2num)
+        count = len(num2obj)
         obj2num[item] = count
         num2obj[count] = item
 
