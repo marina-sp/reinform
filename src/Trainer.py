@@ -62,7 +62,7 @@ class Trainer():
         return entropy_loss
 
     def calc_reinforce_loss(self, all_loss, all_logits, cum_discounted_reward, decaying_beta):
-
+        # checked
         loss = torch.stack(all_loss, dim=1)  # [B, T]
         base_value = self.baseline.get_baseline_value()
         final_reward = cum_discounted_reward - base_value
@@ -139,6 +139,7 @@ class Trainer():
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(np.mean(rewards_np)) + "\n")
 
+            # backprop -- tf: trainer.bp func
             self.baseline.update(torch.mean(cum_discounted_reward))
             self.agent.zero_grad()
             reinforce_loss.backward()
@@ -164,6 +165,7 @@ class Trainer():
             all_final_reward_20 = 0
             all_r_rank = 0
 
+            # _variable + all correct: with rollouts; variable: original data
             for _start_entities, _relations, _answers, start_entities, relations, answers, all_correct\
                     in environment.get_next_batch():
                 batch_size = len(start_entities)
@@ -179,7 +181,6 @@ class Trainer():
                     log_current_prob = log_current_prob.cuda()
 
                 for step in range(self.option.max_step_length):
-                    assert start_entities[0] == _start_entities[0]
                     if step == 0:
                         chosen_state, chosen_relation, chosen_entities, log_current_prob = \
                             self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
@@ -237,6 +238,8 @@ class Trainer():
                                             final_reward_1 += 1
                     else:
                         r_rank += 1.0 / (pos + 1)
+                    else:
+                        r_rank += 0 # todo: change to an appropriate last rank
 
                     #log.info(("pos", (pos, find_ans, relations[line_id])))
 
