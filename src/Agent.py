@@ -50,16 +50,17 @@ class Agent(nn.Module):
         if self.option.use_entity_embed:
             self.entity_embedding = nn.Embedding(self.option.num_relation, self.option.entity_embed_size)
 
-    def step(self, prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step):
+    def _step(self, prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step):
         prev_action_embedding = self.relation_embedding(prev_relation)
         # 1. one step of rnn
         output, new_state = self.policy_step(prev_action_embedding, prev_state)
 
         # Get state vector
-        actions_id = self.graph.get_out(current_entities, start_entities, queries, answers, all_correct, step) # B x n_actions x 2
+        actions_id = self.graph.get_out(current_entities, start_entities, queries, answers, all_correct, step)  # B x n_actions x 2
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
-        out_relations = self.relation_embedding(out_relations_id)  # B x n_actions x rel_emb  = B x n_actions x action_emb
+        out_relations = self.relation_embedding(
+            out_relations_id)  # B x n_actions x rel_emb  = B x n_actions x action_emb
         action = out_relations
 
         current_state = output.squeeze()
@@ -68,22 +69,31 @@ class Agent(nn.Module):
 
         # MLP for policy#
         output = self.policy_mlp(state_query)  # B x 1 x action_emb
-        action = action.transpose(-1, -2) # B x action_emb x n_actions
+        action = action.transpose(-1, -2)  # B x action_emb x n_actions
         prelim_scores = torch.bmm(output, action).squeeze(1)  # B x n_actions
 
         # Masking PAD actions
         dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]  # B x n_actions
         mask = torch.eq(out_relations_id, dummy_relations_id)  # B x n_actions
         dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
-        scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
+        log_scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
+        scores = log_scores.exp()
+
+        return scores, out_relations_id, out_entities_id, new_state
+
+
+    def step(self, prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step):
+        scores, out_relations_id, out_entities_id, new_state = self._step(
+            prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step)
 
         # 4 sample action
-        action_prob = torch.exp(scores)  # pytorch multinomial requires non log probabilities
+        #action_prob = torch.exp(scores)  # pytorch multinomial requires non log probabilities
+        action_prob = scores
         action_id = torch.multinomial(action_prob, 1)  # B x 1
 
         # loss # lookup tf.nn.sparse_softmax_cross_entropy_with_logits
         # 5a.
-        logits = torch.nn.functional.log_softmax(scores, dim=1)  # B x n_actions
+        logits = scores.log_softmax(dim=1)  # B x n_actions
         one_hot = torch.zeros_like(logits).scatter(1, action_id, 1)  # B x n_actions
         loss = - torch.sum(torch.mul(logits, one_hot), dim=1)  # B x n_actions
 
@@ -100,30 +110,11 @@ class Agent(nn.Module):
 
     def test_step(self, prev_state, prev_relation, current_entities, log_current_prob,
                   start_entities, queries, answers, all_correct, batch_size, step):
-        prev_action_embedding = self.relation_embedding(prev_relation)
-        output, new_state = self.policy_step(prev_action_embedding, prev_state)
 
-        actions_id = self.graph.get_out(current_entities, start_entities, queries, answers, all_correct, step)
-        out_relations_id = actions_id[:, :, 0]
-        out_entities_id = actions_id[:, :, 1]
-        out_relations = self.relation_embedding(out_relations_id)
-        action = out_relations # B x n_actions x action_emb
+        scores, out_relations_id, out_entities_id, new_state = self._step(
+            prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step)
 
-        current_state = output.squeeze()
-        queries_embedding = self.relation_embedding(queries)
-        state_query = torch.cat([current_state, queries_embedding], -1)
-        output = self.policy_mlp(state_query) # B x 1 x action_emb
-
-        # action = action.transpose(-1, -2)  # B x action_emb x n_actions
-        # prelim_scores = torch.bmm(output, action).squeeze(1)  # B x n_actions
-
-        prelim_scores = torch.sum(torch.mul(output, action), dim=-1)
-        dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]
-        mask = torch.eq(out_relations_id, dummy_relations_id)
-        dummy_scores = torch.ones_like(prelim_scores) * (-9999)
-        scores = torch.where(mask, dummy_scores, prelim_scores) # B x n_actions
-
-        action_prob = torch.softmax(scores, dim=1) # B x n_actions
+        action_prob = torch.log_softmax(scores, dim=1) # B x n_actions
         log_action_prob = torch.log(action_prob) # B x n_actions
 
         chosen_state, chosen_relation, chosen_entities, log_current_prob = self.test_search\
