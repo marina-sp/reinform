@@ -26,8 +26,8 @@ class Policy_mlp(nn.Module):
         super(Policy_mlp, self).__init__()
         self.option = option
         self.hidden_size = option.mlp_hidden_size
-        self.mlp_l1= nn.Linear(self.option.state_embed_size + self.option.relation_embed_size,
-                               self.hidden_size, bias=True)
+        self.mlp_l1 = nn.Linear(self.option.state_embed_size + self.option.action_embed_size,
+                                self.hidden_size, bias=True)
         self.mlp_l2 = nn.Linear(self.hidden_size, self.option.action_embed_size, bias=True)
 
     def forward(self, state_query):
@@ -106,21 +106,24 @@ class Agent(nn.Module):
         out_relations_id = actions_id[:, :, 0]
         out_entities_id = actions_id[:, :, 1]
         out_relations = self.relation_embedding(out_relations_id)
-        action = out_relations
+        action = out_relations # B x n_actions x action_emb
 
         current_state = output.squeeze()
         queries_embedding = self.relation_embedding(queries)
         state_query = torch.cat([current_state, queries_embedding], -1)
-        output = self.policy_mlp(state_query)
+        output = self.policy_mlp(state_query) # B x 1 x action_emb
+
+        # action = action.transpose(-1, -2)  # B x action_emb x n_actions
+        # prelim_scores = torch.bmm(output, action).squeeze(1)  # B x n_actions
 
         prelim_scores = torch.sum(torch.mul(output, action), dim=-1)
         dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]
         mask = torch.eq(out_relations_id, dummy_relations_id)
         dummy_scores = torch.ones_like(prelim_scores) * (-9999)
-        scores = torch.where(mask, dummy_scores, prelim_scores)
+        scores = torch.where(mask, dummy_scores, prelim_scores) # B x n_actions
 
-        action_prob = torch.softmax(scores, dim=1)
-        log_action_prob = torch.log(action_prob)
+        action_prob = torch.softmax(scores, dim=1) # B x n_actions
+        log_action_prob = torch.log(action_prob) # B x n_actions
 
         chosen_state, chosen_relation, chosen_entities, log_current_prob = self.test_search\
             (new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size)
@@ -129,7 +132,8 @@ class Agent(nn.Module):
 
     def test_search(self, new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size):
         ## tf: trainer beam search ##
-        log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
+
+        log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(-1, batch_size).t()
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
         top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)
