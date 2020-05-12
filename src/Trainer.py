@@ -109,7 +109,8 @@ class Trainer():
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
             reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
 
-            log.info("{:3.0f} reward: {}".format(batch_counter, rewards.mean()))
+            log.info("{:3.0f} reward: {:2.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
+                     .format(batch_counter, rewards.mean(), loss.mean(), reinforce_loss.mean()))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
 
