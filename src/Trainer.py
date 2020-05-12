@@ -236,7 +236,6 @@ class Trainer():
                                         final_reward_3 += 1
                                         if pos < 1:
                                             final_reward_1 += 1
-                    else:
                         r_rank += 1.0 / (pos + 1)
                     else:
                         r_rank += 0 # todo: change to an appropriate last rank
