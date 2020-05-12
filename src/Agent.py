@@ -133,16 +133,29 @@ class Agent(nn.Module):
     def test_search(self, new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size):
         ## tf: trainer beam search ##
 
-        log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(-1, batch_size).t()
+        ## CAREFUL: t=torch.arange(6); t.view(3,2) does not equal t.view(2,3).t()
+        # be aware of the flattened order of the elements
+
+        # shape: BATCH*TIMES --> BATCH x TIMES*MAX_OUT
+        # linear order: BATCH(TIMES(MAX_OUT)))
+        log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
-        top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)
+        top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
 
-        new_state_0 = new_state[0].repeat_interleave(self.option.max_out)\
-            .view(batch_size, -1, self.option.state_embed_size)
-        new_state_1 = new_state[1].repeat_interleave(self.option.max_out) \
-            .view(batch_size, -1, self.option.state_embed_size)
+        #new_state_0 = new_state[0].repeat_interleave(self.option.max_out)\
+        #    .view(batch_size, -1, self.option.state_embed_size)
+        #new_state_1 = new_state[1].repeat_interleave(self.option.max_out) \
+        #    .view(batch_size, -1, self.option.state_embed_size)
 
+        # copy
+        new_state_0 = new_state[0].unsqueeze(1).repeat(1, self.option.max_out, 1)
+        # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
+        new_state_0 = new_state_0.view(batch_size, -1, self.option.state_embed_size)
+        new_state_1 = new_state[1].unsqueeze(1).repeat(1, self.option.max_out, 1)
+        new_state_1 = new_state_1.view(batch_size, -1, self.option.state_embed_size)
+
+        # B*TIMES x MAX_OUT --> B x TIMES*MAX_OUT
         out_relations_id = out_relations_id.view(batch_size, -1)
         out_entities_id = out_entities_id.view(batch_size, -1)
 
