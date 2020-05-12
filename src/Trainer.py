@@ -21,20 +21,6 @@ class Trainer():
         if self.option.use_cuda:
             self.agent.cuda()
 
-    def save_model(self):
-        dir_path = os.path.join(self.option.exps_dir, self.option.dataset)
-        path = os.path.join(dir_path, "model.pkt")
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
-        torch.save(self.agent.state_dict(), path)
-
-    def load_model(self):
-        dir_path = os.path.join(self.option.exps_dir, self.option.dataset)
-        path = os.path.join(dir_path, "model.pkt")
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
-        self.agent.load_state_dict(torch.load(path))
-
     def get_reward(self, current_entities, answers, all_correct):
         reward = (current_entities == answers)
         condlist = [reward == True, reward == False]
@@ -203,8 +189,8 @@ class Trainer():
                 final_reward_20 = 0
                 r_rank = 0
 
-                rewards = self.agent.get_reward(current_entities, _answers, all_correct,
-                                                self.positive_reward, self.negative_reward)
+                # B x TIMES
+                rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
                 rewards = np.array(rewards)
                 rewards = rewards.reshape(-1, self.option.test_times)
 
@@ -238,7 +224,7 @@ class Trainer():
                                             final_reward_1 += 1
                         r_rank += 1.0 / (pos + 1)
                     else:
-                        r_rank += 0 # todo: change to an appropriate last rank
+                        r_rank += 0 # an appropriate last rank = 1.0 / self.data_loader.num_entity, but no big difference
 
                     #log.info(("pos", (pos, find_ans, relations[line_id])))
 
@@ -272,18 +258,16 @@ class Trainer():
                 f.write("all_r_rank: " + str(all_r_rank) + "\n")
 
     def save_model(self):
-        dir_path = os.path.join(self.option.exps_dir, self.option.dataset)
-        path = os.path.join(dir_path, "model.pkt")
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
+        path = os.path.join(self.option.this_expsdir, "model.pkt")
+        # if not os.path.exists(dir_path):
+        #     os.makedirs(dir_path)
         torch.save(self.agent.state_dict(), path)
 
     def load_model(self):
-        dir_path = os.path.join(self.option.exps_dir, self.option.dataset)
+        if self.option.load_model:
+            dir_path = os.path.join(self.option.expsdir, self.option.load_model)
+        else:
+            dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
+        #saved_state = torch.load(path, map_location=lambda storage, loc: 'cpu')
         self.agent.load_state_dict(torch.load(path))
-
-
-
