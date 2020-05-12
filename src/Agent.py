@@ -89,8 +89,9 @@ class Agent(nn.Module):
 
         # 6. Map back to true id
         chosen_relation = torch.gather(out_relations_id, dim=1, index=action_id).squeeze()
+        next_entities = torch.gather(out_entities_id, dim=1, index=action_id).squeeze()
         action_id = action_id.squeeze()
-        next_entities = self.graph.get_next(current_entities, action_id)
+        assert (next_entities == self.graph.get_next(current_entities, action_id)).all()
 
         sss = self.data_loader.num2relation[(int)(queries[0])] + "\t" + self.data_loader.num2relation[(int)(chosen_relation[0])]
         #log.info(sss)
@@ -162,6 +163,7 @@ class Agent(nn.Module):
         chosen_relation = torch.gather(out_relations_id, dim=1, index=top_k_action_id).view(-1)
         chosen_entities = torch.gather(out_entities_id, dim=1, index=top_k_action_id).view(-1)
         log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
+        assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
         top_k_action_id_state = top_k_action_id.unsqueeze(2).repeat(1, 1, self.option.state_embed_size)
         chosen_state = \
@@ -178,13 +180,9 @@ class Agent(nn.Module):
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
-    def get_reward(self, current_entities, answers, all_correct, positive_reward, negative_reward):
-        reward = (current_entities == answers).cpu()
-
-        reward = reward.numpy()
-        condlist = [reward == True, reward == False]
-        choicelist = [positive_reward, negative_reward]
-        reward = np.select(condlist, choicelist)
+    def get_reward(self, current_entities, answers, positive_reward, negative_reward):
+        reward = (current_entities == answers)
+        reward = torch.where(reward, positive_reward, negative_reward)
         return reward
 
     def print_parameter(self):

@@ -13,20 +13,13 @@ class Trainer():
         self.agent = agent
         self.data_loader = data_loader
         self.optimizer = torch.optim.Adam(self.agent.parameters(), lr=self.option.learning_rate)
-        self.positive_reward = 1
-        self.negative_reward = 0
+        self.positive_reward = torch.tensor(1.).cuda() if option.use_cuda else torch.tensor(1.)
+        self.negative_reward = torch.tensor(0.).cuda() if option.use_cuda else torch.tensor(0.)
         self.baseline = ReactiveBaseline(option, self.option.Lambda)
-        self.decaying_beta_init = self.option.beta
+        self.decaying_beta = self.option.beta
 
         if self.option.use_cuda:
             self.agent.cuda()
-
-    def get_reward(self, current_entities, answers, all_correct):
-        reward = (current_entities == answers)
-        condlist = [reward == True, reward == False]
-        choicelist = [self.positive_reward, self.negative_reward]
-        reward = np.select(condlist, choicelist)
-        return reward
 
     def calc_cum_discounted_reward(self, rewards):
         running_add = torch.zeros([rewards.shape[0]])
@@ -47,7 +40,7 @@ class Trainer():
         entropy_loss = - torch.mean(torch.sum(torch.mul(torch.exp(all_logits), all_logits), dim=1))  # scalar
         return entropy_loss
 
-    def calc_reinforce_loss(self, all_loss, all_logits, cum_discounted_reward, decaying_beta):
+    def calc_reinforce_loss(self, all_loss, all_logits, cum_discounted_reward):
         # checked
         loss = torch.stack(all_loss, dim=1)  # [B, T]
         base_value = self.baseline.get_baseline_value()
@@ -58,7 +51,7 @@ class Trainer():
         final_reward = torch.div(final_reward - reward_mean, reward_std)
 
         loss = torch.mul(loss, final_reward)  # [B, T]
-        entropy_loss = decaying_beta * self.entropy_reg_loss(all_logits)
+        entropy_loss = self.decaying_beta * self.entropy_reg_loss(all_logits)
 
         total_loss = torch.mean(loss) - entropy_loss  # scalar
 
@@ -73,7 +66,6 @@ class Trainer():
         self.agent.set_graph(train_graph)
 
         batch_counter = 0
-        current_decay = self.decaying_beta_init
         current_decay_count = 0
 
         for start_entities, queries, answers, all_correct in environment.get_next_batch():
@@ -84,7 +76,7 @@ class Trainer():
 
             current_decay_count += 1
             if current_decay_count == self.option.decay_batch:
-                current_decay *= self.option.decay_rate
+                self.decaying_beta *= self.option.decay_rate
                 current_decay_count = 0
 
             # agent. __call__ from tf
@@ -113,17 +105,13 @@ class Trainer():
                 current_entities = next_entities
                 prev_state = new_state
 
-            rewards_np = self.agent.get_reward(current_entities, answers, all_correct,
-                                            self.positive_reward, self.negative_reward)
-            rewards = torch.from_numpy(rewards_np)
-            if self.option.use_cuda:
-                rewards = rewards.cuda()
+            rewards = self.agent.get_reward(current_entities, answers, self.positive_reward, self.negative_reward)
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
-            reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward, current_decay)
+            reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
 
-            log.info("{:3.0f} reward: {}".format(batch_counter, np.mean(rewards_np)))
+            log.info("{:3.0f} reward: {}".format(batch_counter, rewards.mean()))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-                f.write("reward: " + str(np.mean(rewards_np)) + "\n")
+                f.write("reward: " + str(rewards.mean()) + "\n")
 
             # backprop -- tf: trainer.bp func
             self.baseline.update(torch.mean(cum_discounted_reward))
@@ -191,8 +179,7 @@ class Trainer():
 
                 # B x TIMES
                 rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
-                rewards = np.array(rewards)
-                rewards = rewards.reshape(-1, self.option.test_times)
+                rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
 
                 if self.option.use_cuda:
                     current_entities = current_entities.cpu()
