@@ -114,8 +114,7 @@ class Agent(nn.Module):
         scores, out_relations_id, out_entities_id, new_state = self._step(
             prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step)
 
-        action_prob = torch.log_softmax(scores, dim=1) # B x n_actions
-        log_action_prob = torch.log(action_prob) # B x n_actions
+        log_action_prob = torch.log_softmax(scores, dim=1) # B x n_actions
 
         chosen_state, chosen_relation, chosen_entities, log_current_prob = self.test_search\
             (new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size)
