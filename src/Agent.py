@@ -42,9 +42,18 @@ class Agent(nn.Module):
         self.option = option
         self.data_loader = data_loader
         self.relation_embedding = nn.Embedding(self.option.num_relation, self.option.relation_embed_size)
-        torch.nn.init.xavier_uniform_(self.relation_embedding.weight.data)
         self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
+
+        # control random state
+        if self.option.use_cuda:
+            self.generator = torch.cuda.manual_seed(self.option.random_seed)
+            torch.manual_seed(self.option.random_seed)
+        else:
+            self.generator = torch.manual_seed(self.option.random_seed)
+            torch.cuda.manual_seed(self.option.random_seed)
+
+        torch.nn.init.xavier_uniform_(self.relation_embedding.weight.data)
 
         if self.option.use_entity_embed:
             self.entity_embedding = nn.Embedding(self.option.num_entity, self.option.entity_embed_size)
@@ -83,7 +92,10 @@ class Agent(nn.Module):
         logits, out_relations_id, out_entities_id, new_state = self._step(*params)
 
         # 4 sample action
-        action_id = Categorical(logits=logits).sample((1,)).view(-1, 1)  # B x 1
+        action_id = torch.multinomial(input=logits.exp(), num_samples=1, generator=self.generator)  # B x 1
+        #action_id = Categorical(logits=logits).sample((1,)).view(-1, 1)  # B x 1
+
+        print(" ".join(str(e.item()) for e in action_id.flatten()))
 
         # loss # lookup tf.nn.sparse_softmax_cross_entropy_with_logits
         # 5a.
