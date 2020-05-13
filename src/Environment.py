@@ -53,9 +53,9 @@ class Environment():
                 current_idx = test_data_count
 
             batch = self.data_array[batch_idx, :]
-            start_entities = batch[:,0]
+            start_entities = batch[:,2]
             relations = batch[:, 1]
-            answers = batch[:, 2]
+            answers = batch[:, 0]
 
             if self.option.use_cuda:
                 start_entities_np = start_entities.cpu().numpy()
