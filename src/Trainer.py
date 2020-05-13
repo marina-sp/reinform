@@ -111,7 +111,7 @@ class Trainer():
                 current_entities = next_entities
                 prev_state = new_state
 
-            rewards = self.agent.get_reward(current_entities, answers, self.positive_reward, self.negative_reward)
+            rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
             reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
 
