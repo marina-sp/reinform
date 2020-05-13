@@ -21,7 +21,7 @@ class Knowledge_graph():
 
         all_correct = defaultdict(set)
         out_array = np.ones((self.option.num_entity, self.option.max_out, 2), dtype=np.int64)
-        out_array[:, :, 0] *= self.data_loader.relation2num["PAD"]
+        out_array[:, :, 0] *= self.data_loader.kg.pad_token_id
         out_array[:, :, 1] *= self.data_loader.kg.pad_token_id
         more_out_count = 0
         for head in all_out_dict:

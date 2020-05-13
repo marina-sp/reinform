@@ -104,7 +104,8 @@ class Trainer():
             batch_size = start_entities.shape[0]
             prev_state = [torch.zeros(start_entities.shape[0], self.option.state_embed_size),
                           torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
-            prev_relation = self.agent.get_dummy_start_relation(batch_size)
+            # prev_relation = self.agent.get_dummy_start_relation(batch_size)
+            prev_relation = queries
             current_entities = start_entities
             if self.option.use_cuda:
                 prev_relation = prev_relation.cuda()
