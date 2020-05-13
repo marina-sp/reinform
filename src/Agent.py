@@ -2,8 +2,8 @@ import torch.nn as nn
 import numpy as np
 import torch
 import logging as log
+from torch.distributions.categorical import Categorical
 from collections import defaultdict
-
 
 class Policy_step(nn.Module):
     def __init__(self, option):
@@ -76,24 +76,21 @@ class Agent(nn.Module):
         dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]  # B x n_actions
         mask = torch.eq(out_relations_id, dummy_relations_id)  # B x n_actions
         dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
-        log_scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
-        scores = log_scores.exp()
+        scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
+        logits = scores.log_softmax(dim=-1)  # B x n_actions
 
-        return scores, out_relations_id, out_entities_id, new_state
+        return logits, out_relations_id, out_entities_id, new_state
 
 
     def step(self, prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step):
-        scores, out_relations_id, out_entities_id, new_state = self._step(
+        logits, out_relations_id, out_entities_id, new_state = self._step(
             prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step)
 
         # 4 sample action
-        #action_prob = torch.exp(scores)  # pytorch multinomial requires non log probabilities
-        action_prob = scores
-        action_id = torch.multinomial(action_prob, 1)  # B x 1
+        action_id = Categorical(logits=logits).sample((1,)).view(-1, 1)  # B x 1
 
         # loss # lookup tf.nn.sparse_softmax_cross_entropy_with_logits
         # 5a.
-        logits = scores.log_softmax(dim=1)  # B x n_actions
         one_hot = torch.zeros_like(logits).scatter(1, action_id, 1)  # B x n_actions
         loss = - torch.sum(torch.mul(logits, one_hot), dim=1)  # B x n_actions
 
@@ -111,10 +108,8 @@ class Agent(nn.Module):
     def test_step(self, prev_state, prev_relation, current_entities, log_current_prob,
                   start_entities, queries, answers, all_correct, batch_size, step):
 
-        scores, out_relations_id, out_entities_id, new_state = self._step(
+        log_action_prob, out_relations_id, out_entities_id, new_state = self._step(
             prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step)
-
-        log_action_prob = torch.log_softmax(scores, dim=1) # B x n_actions
 
         chosen_state, chosen_relation, chosen_entities, log_current_prob = self.test_search\
             (new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size)
