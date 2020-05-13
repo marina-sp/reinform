@@ -32,9 +32,9 @@ def main():
     parser.add_argument('--use_inverse', default=False, type=bool)
 
     # Agent configuration
-    parser.add_argument('--state_embed_size', default=50, type=int)
-    parser.add_argument('--relation_embed_size', default=50, type=int)
-    parser.add_argument('--mlp_hidden_size', default=100, type=int)
+    parser.add_argument('--state_embed_size', default=100, type=int)
+    parser.add_argument('--relation_embed_size', default=100, type=int)
+    parser.add_argument('--mlp_hidden_size', default=200, type=int)
     parser.add_argument('--use_entity_embed', default=False, type=bool)
     parser.add_argument('--entity_embed_size', default=50, type=int)
     parser.add_argument("--grad_clip_norm", default=5, type=int)

@@ -11,8 +11,8 @@ class Environment():
         self.option = option
 
         self.data_array = torch.from_numpy(data)
-        if self.option.use_cuda:
-            self.data_array = self.data_array.cuda()
+        #if self.option.use_cuda:
+        #    self.data_array = self.data_array.cuda()
 
     def get_next_batch(self):
         if self.mode == 'train':

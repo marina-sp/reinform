@@ -13,8 +13,8 @@ class Trainer():
         self.agent = agent
         self.data_loader = data_loader
         self.optimizer = torch.optim.Adam(self.agent.parameters(), lr=self.option.learning_rate)
-        self.positive_reward = torch.tensor(1.).cuda() if option.use_cuda else torch.tensor(1.)
-        self.negative_reward = torch.tensor(0.).cuda() if option.use_cuda else torch.tensor(0.)
+        self.positive_reward = torch.tensor(1.)
+        self.negative_reward = torch.tensor(0.)
         self.baseline = ReactiveBaseline(option, self.option.Lambda)
         self.decaying_beta = self.option.beta
 
@@ -84,19 +84,22 @@ class Trainer():
                           torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
             prev_relation = self.agent.get_dummy_start_relation(batch_size)
             current_entities = start_entities
+            queries_cpu = queries.detach()
             if self.option.use_cuda:
                 prev_relation = prev_relation.cuda()
                 prev_state[0] = prev_state[0].cuda()
                 prev_state[1] = prev_state[1].cuda()
+                queries = queries.cuda()
 
             all_loss = []
             all_logits = []
             all_action_id = []
 
+
             for step in range(self.option.max_step_length):
-                actions_id = train_graph.get_out(current_entities, start_entities, queries, answers, all_correct, step)
+                actions_id = train_graph.get_out(current_entities, start_entities, queries_cpu, answers, all_correct, step)
                 if self.option.use_cuda:
-                    actions_id = actions_id.cuda()
+                    actions_id = actions_id.cuda()                    
                 loss, new_state, logits, action_id, next_entities, chosen_relation= \
                     self.agent.step(prev_state, prev_relation, actions_id, queries)
                 all_loss.append(loss)
@@ -266,7 +269,7 @@ class Trainer():
 
     def load_model(self):
         if self.option.load_model:
-            dir_path = os.path.join(self.option.expsdir, self.option.load_model)
+            dir_path = os.path.join(self.option.exps_dir, self.option.load_model)
         else:
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
