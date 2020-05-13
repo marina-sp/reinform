@@ -84,12 +84,13 @@ class Trainer():
                           torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
             prev_relation = self.agent.get_dummy_start_relation(batch_size)
             current_entities = start_entities
-            queries_cpu = queries.detach()
+            queries_cpu = queries.detach().clone()
             if self.option.use_cuda:
                 prev_relation = prev_relation.cuda()
                 prev_state[0] = prev_state[0].cuda()
                 prev_state[1] = prev_state[1].cuda()
                 queries = queries.cuda()
+                current_entities = current_entities.cuda()
 
             all_loss = []
             all_logits = []
@@ -97,16 +98,17 @@ class Trainer():
 
 
             for step in range(self.option.max_step_length):
-                actions_id = train_graph.get_out(current_entities, start_entities, queries_cpu, answers, all_correct, step)
+                actions_id = train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
+                                                 answers, all_correct, step)
                 if self.option.use_cuda:
                     actions_id = actions_id.cuda()                    
                 loss, new_state, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_state, prev_relation, actions_id, queries)
+                    self.agent.step(prev_state, prev_relation, current_entities, actions_id, queries)
                 all_loss.append(loss)
                 all_logits.append(logits)
                 all_action_id.append(action_id)
                 prev_relation = chosen_relation
-                current_entities = next_entities.cpu()
+                current_entities = next_entities
                 prev_state = new_state
 
             rewards = self.agent.get_reward(current_entities, answers, self.positive_reward, self.negative_reward)
@@ -172,15 +174,15 @@ class Trainer():
                         actions_id = test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
                                                         step)
                         chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                            self.agent.test_step(prev_state, prev_relation, actions_id, log_current_prob,
-                                                 queries, batch_size)
+                            self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
+                                                 log_current_prob, queries, batch_size)
 
                     else:
                         actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
                                                         all_correct, step)
                         chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                            self.agent.test_step(prev_state, prev_relation, actions_id, log_current_prob,
-                                                 _queries, batch_size)
+                            self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
+                                                 log_current_prob, _queries, batch_size)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities

@@ -58,21 +58,30 @@ class Agent(nn.Module):
         if self.option.use_entity_embed:
             self.entity_embedding = nn.Embedding(self.option.num_entity, self.option.entity_embed_size)
 
-    def _step(self, prev_state, prev_relation, actions_id, queries):
-        prev_action_embedding = self.relation_embedding(prev_relation)
+    def action_encoder(self, rel_ids, ent_ids):
+        if self.option.use_entity_embed:
+            parts = self.relation_embedding(rel_ids), self.entity_embedding(ent_ids)
+            return torch.cat(parts, dim=-1)
+        else:
+            return self.relation_embedding(rel_ids)
+
+    def _step(self, prev_state, prev_relation, current_entity, actions_id, queries):
+        prev_action_embedding = self.action_encoder(prev_relation, current_entity)
         # 1. one step of rnn
         output, new_state = self.policy_step(prev_action_embedding, prev_state)
 
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
-        out_relations = self.relation_embedding(
-            out_relations_id)  # B x n_actions x rel_emb  = B x n_actions x action_emb
-        action = out_relations  # B x n_actions x action_emb
+        action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
 
         current_state = output.squeeze()
         queries_embedding = self.relation_embedding(queries)
-        state_query = torch.cat([current_state, queries_embedding], -1)
+        if self.option.use_entity_embed:
+            entity_embedding = self.entity_embedding(current_entity)
+            state_query = torch.cat([current_state, queries_embedding, entity_embedding], -1)
+        else:
+            state_query = torch.cat([current_state, queries_embedding], -1)
 
         # MLP for policy#
         output = self.policy_mlp(state_query)  # B x 1 x action_emb
@@ -113,10 +122,10 @@ class Agent(nn.Module):
 
         return loss, new_state, logits, action_id, next_entities, chosen_relation
 
-    def test_step(self, prev_state, prev_relation, actions_id, log_current_prob, queries, batch_size):
+    def test_step(self, prev_state, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size):
 
         log_action_prob, out_relations_id, out_entities_id, new_state = self._step(
-            prev_state, prev_relation, actions_id, queries)
+            prev_state, prev_relation, current_entity, actions_id, queries)
 
         chosen_state, chosen_relation, chosen_entities, log_current_prob = self.test_search\
             (new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size)
