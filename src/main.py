@@ -41,7 +41,7 @@ def main():
 
     parser.add_argument('--train_times', default=20, type=int)
     parser.add_argument('--test_times', default=100, type=int)
-    parser.add_argument("--train_batch", default=1000, type=int)
+    parser.add_argument("--train_batch", default=5, type=int)
     parser.add_argument('--max_out', default=200, type=int)
     parser.add_argument('--max_step_length', default=3, type=int)
 
@@ -50,12 +50,15 @@ def main():
     parser.add_argument('--learning_rate', default=0.001, type=float)
     parser.add_argument('--batch_size', default=256, type=int)
     parser.add_argument('--decay_weight', default=0.02, type=float)
-    parser.add_argument('--decay_batch', default=100, type=int)
+    parser.add_argument('--decay_batch', default=200, type=int)
     parser.add_argument('--decay_rate', default=0.9, type=float)
 
     parser.add_argument('--gamma', default=1, type=float)
     parser.add_argument('--Lambda', default=0.05, type=float)
     parser.add_argument('--beta', default=0.05, type=float)
+
+    # Randomization control
+    parser.add_argument('--random_seed', default=1, type=int)
 
 
     d = vars(parser.parse_args())
