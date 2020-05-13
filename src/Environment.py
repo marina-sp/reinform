@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from tqdm import tqdm
 
 
 class Environment():
@@ -42,7 +43,9 @@ class Environment():
     def yield_next_batch_test(self):
         test_data_count = len(self.data)
         current_idx = 0
+        bar = tqdm(total=test_data_count // self.option.batch_size)
         while True:
+            bar.update()
             if current_idx == test_data_count:
                 return
             if test_data_count - current_idx > self.option.batch_size:
