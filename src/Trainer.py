@@ -47,7 +47,7 @@ class Trainer():
         final_reward = cum_discounted_reward - base_value
 
         reward_mean = torch.mean(final_reward)
-        reward_std = torch.std(final_reward) + 1e-6
+        reward_std = torch.sqrt(torch.var(final_reward)) + 1e-6
         final_reward = torch.div(final_reward - reward_mean, reward_std)
 
         loss = torch.mul(loss, final_reward)  # [B, T]
@@ -113,7 +113,7 @@ class Trainer():
             reward_reshape = np.sum(reward_reshape, axis=1)  # [orig_batch]
             reward_reshape = (reward_reshape > 0)
             num_ep_correct = np.sum(reward_reshape)
-            avg_ep_correct = num_ep_correct / batch_size
+            avg_ep_correct = num_ep_correct / self.option.batch_size
 
             log.info("{:3.0f} reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
                      .format(batch_counter, rewards.mean(), num_ep_correct, avg_ep_correct, loss.mean(), reinforce_loss.mean()))
