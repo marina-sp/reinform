@@ -41,22 +41,20 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         self.option = option
         self.data_loader = data_loader
-        self.graph = graph
         self.relation_embedding = nn.Embedding(self.option.num_relation, self.option.relation_embed_size)
-        torch.nn.init.xavier_uniform_(self.relation_embedding.weight)
+        torch.nn.init.xavier_uniform_(self.relation_embedding.weight.data)
         self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
 
         if self.option.use_entity_embed:
-            self.entity_embedding = nn.Embedding(self.option.num_relation, self.option.entity_embed_size)
+            self.entity_embedding = nn.Embedding(self.option.num_entity, self.option.entity_embed_size)
 
-    def _step(self, prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step):
+    def _step(self, prev_state, prev_relation, actions_id, queries):
         prev_action_embedding = self.relation_embedding(prev_relation)
         # 1. one step of rnn
         output, new_state = self.policy_step(prev_action_embedding, prev_state)
 
         # Get state vector
-        actions_id = self.graph.get_out(current_entities, start_entities, queries, answers, all_correct, step)  # B x n_actions x 2
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
         out_relations = self.relation_embedding(
@@ -81,9 +79,8 @@ class Agent(nn.Module):
         return logits, out_relations_id, out_entities_id, new_state
 
 
-    def step(self, prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step):
-        logits, out_relations_id, out_entities_id, new_state = self._step(
-            prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step)
+    def step(self, *params):
+        logits, out_relations_id, out_entities_id, new_state = self._step(*params)
 
         # 4 sample action
         action_id = Categorical(logits=logits).sample((1,)).view(-1, 1)  # B x 1
@@ -99,16 +96,15 @@ class Agent(nn.Module):
         action_id = action_id.squeeze()
         # assert (next_entities == self.graph.get_next(current_entities, action_id)).all()
 
-        sss = self.data_loader.num2relation[(int)(queries[0])] + "\t" + self.data_loader.num2relation[(int)(chosen_relation[0])]
+        #sss = self.data_loader.num2relation[(int)(queries[0])] + "\t" + self.data_loader.num2relation[(int)(chosen_relation[0])]
         #log.info(sss)
 
         return loss, new_state, logits, action_id, next_entities, chosen_relation
 
-    def test_step(self, prev_state, prev_relation, current_entities, log_current_prob,
-                  start_entities, queries, answers, all_correct, batch_size, step):
+    def test_step(self, prev_state, prev_relation, actions_id, log_current_prob, queries, batch_size):
 
         log_action_prob, out_relations_id, out_entities_id, new_state = self._step(
-            prev_state, prev_relation, current_entities, start_entities, queries, answers, all_correct, step)
+            prev_state, prev_relation, actions_id, queries)
 
         chosen_state, chosen_relation, chosen_entities, log_current_prob = self.test_search\
             (new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size)
@@ -155,9 +151,6 @@ class Agent(nn.Module):
              torch.gather(new_state_1, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size))
 
         return chosen_state, chosen_relation, chosen_entities, log_current_prob
-
-    def set_graph(self, graph):
-        self.graph = graph
 
     def get_dummy_start_relation(self, batch_size):
         dummy_start_item = self.data_loader.relation2num["Start"]

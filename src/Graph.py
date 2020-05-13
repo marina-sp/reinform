@@ -42,8 +42,8 @@ class Knowledge_graph():
         self.out_array = torch.from_numpy(out_array)
         self.all_correct = all_correct
         print("more_out_count", more_out_count)
-        if self.option.use_cuda:
-            self.out_array = self.out_array.cuda()
+        #if self.option.use_cuda:
+        #    self.out_array = self.out_array.cuda()
 
     # 获取从图谱上current_entities的out_relations, out_entities
     def get_out(self, current_entities, start_entities, query_relations, answers, all_correct, step):
@@ -62,7 +62,7 @@ class Knowledge_graph():
                 entities = ret[i, :, 1]
                 answer = answers[i]
                 for j in range(entities.shape[0]):
-                    if entities[j] in all_correct[i] and entities[j] != answer:
+                    if entities[j].item() in all_correct[i] and entities[j] != answer:
                         relations[j] = self.data_loader.relation2num["Pad"]
                         entities[j] = self.data_loader.entity2num["Pad"]
 

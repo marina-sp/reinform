@@ -63,7 +63,6 @@ class Trainer():
         train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_train_graph_data())
         train_data = self.data_loader.get_train_data()
         environment = Environment(self.option, train_graph, train_data, "train")
-        self.agent.set_graph(train_graph)
 
         batch_counter = 0
         current_decay_count = 0
@@ -95,14 +94,16 @@ class Trainer():
             all_action_id = []
 
             for step in range(self.option.max_step_length):
+                actions_id = train_graph.get_out(current_entities, start_entities, queries, answers, all_correct, step)
+                if self.option.use_cuda:
+                    actions_id = actions_id.cuda()
                 loss, new_state, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_state, prev_relation, current_entities,
-                                    start_entities, queries, answers, all_correct, step)
+                    self.agent.step(prev_state, prev_relation, actions_id, queries)
                 all_loss.append(loss)
                 all_logits.append(logits)
                 all_action_id.append(action_id)
                 prev_relation = chosen_relation
-                current_entities = next_entities
+                current_entities = next_entities.cpu()
                 prev_state = new_state
 
             rewards = self.agent.get_reward(current_entities, answers, self.positive_reward, self.negative_reward)
@@ -131,12 +132,14 @@ class Trainer():
         with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "w", encoding='UTF-8') as f:
             f.write("Begin test\n")
         with torch.no_grad():
+            self.agent.cpu()
+            self.option.use_cuda = False
+
             test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_test_graph_data())
             test_data = self.data_loader.get_test_data()
             test_graph.update_all_correct(test_data)
             test_graph.update_all_correct(self.data_loader.get_valid_data())
             environment = Environment(self.option, test_graph, test_data, "test")
-            self.agent.set_graph(test_graph)
 
             total_examples = len(test_data)
             all_final_reward_1 = 0
@@ -147,7 +150,7 @@ class Trainer():
             all_r_rank = 0
 
             # _variable + all correct: with rollouts; variable: original data
-            for _start_entities, _relations, _answers, start_entities, relations, answers, all_correct\
+            for _start_entities, _queries, _answers, start_entities, queries, answers, all_correct\
                     in environment.get_next_batch():
                 batch_size = len(start_entities)
                 prev_state = [torch.zeros(start_entities.shape[0], self.option.state_embed_size),
@@ -163,14 +166,18 @@ class Trainer():
 
                 for step in range(self.option.max_step_length):
                     if step == 0:
+                        actions_id = test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
+                                                        step)
                         chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                            self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
-                                                 start_entities, relations, answers, all_correct, batch_size, step)
+                            self.agent.test_step(prev_state, prev_relation, actions_id, log_current_prob,
+                                                 queries, batch_size)
 
                     else:
+                        actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
+                                                        all_correct, step)
                         chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                            self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
-                                                 _start_entities, _relations, _answers, all_correct, batch_size, step)
+                            self.agent.test_step(prev_state, prev_relation, actions_id, log_current_prob,
+                                                 _queries, batch_size)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
