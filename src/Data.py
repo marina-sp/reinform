@@ -3,6 +3,7 @@ from collections import defaultdict
 import numpy as np
 import copy
 
+from kg_rl import *
 
 class Data_loader():
     def __init__(self, option):
@@ -25,32 +26,41 @@ class Data_loader():
         self.num_operator = 0
 
         data_path = os.path.join(self.option.datadir, self.option.dataset)
+
+        self.kg = CustomKG("freebase15k_237") 
+        self.kg.prepare_data()                                                                                                                              
+        self.kg.add_reversed_relations()                                                                                                                    
+        self.kg.add_extra_relations() 
+
         self.load_data_all(data_path)
 
     def load_data_all(self, path):
-        train_data_path = os.path.join(path, "train.txt")
-        test_data_path = os.path.join(path, "test.txt")
-        valid_data_path = os.path.join(path, "valid.txt")
-        entity_path = os.path.join(path, "entities.txt")
-        relations_path = os.path.join(path, "relations.txt")
+        # train_data_path = os.path.join(path, "train.txt")
+        # test_data_path = os.path.join(path, "test.txt")
+        # valid_data_path = os.path.join(path, "valid.txt")
+        # entity_path = os.path.join(path, "entities.txt")
+        # relations_path = os.path.join(path, "relations.txt")
 
-        self.entity2num, self.num2entity = self._load_dict(entity_path)
-        self.relation2num, self.num2relation = self._load_dict(relations_path)
-        self._augment_reverse_relation()
-        self._add_item(self.relation2num, self.num2relation, "Equal")
-        self._add_item(self.relation2num, self.num2relation, "Pad")
-        self._add_item(self.relation2num, self.num2relation, "Start")
-        self._add_item(self.entity2num, self.num2entity, "Pad")
-        print(self.relation2num)
+        self.entity2num, self.num2entity = self.kg.entity2idx, self.kg.idx2entity 
+        self.relation2num, self.num2relation = self.kg.relation2idx, self.kg.idx2relation
+        # self._augment_reverse_relation()
+        # self._add_item(self.relation2num, self.num2relation, "Equal")
+        # self._add_item(self.relation2num, self.num2relation, "Pad")
+        # self._add_item(self.relation2num, self.num2relation, "Start")
+        # self._add_item(self.entity2num, self.num2entity, "Pad")
+        # print(self.relation2num)
 
         self.num_relation = len(self.relation2num)
-        self.num_entity = len(self.entity2num)
+        self.num_entity = len(self.entity2num) + self.kg.reserved_vocab
         print("num_relation", self.num_relation)
         print("num_entity", self.num_entity)
 
-        self.train_data = self._load_data(train_data_path)
-        self.valid_data = self._load_data(valid_data_path)
-        self.test_data = self._load_data(test_data_path)
+        self.train_data = self.load_data("train")
+        self.valid_data = self.load_data("valid")
+        self.test_data = self.load_data("test")
+    
+    def load_data(self, data):
+        return [[t.h, t.r, t.t] for t in self.kg.triplets[data]]
 
     def _load_data(self, path):
         data = [l.strip().split("\t") for l in open(path, "r").readlines()]

@@ -24,9 +24,9 @@ class Environment():
             batch_idx = np.random.randint(0, len(self.data_array), size=self.option.batch_size)
             #batch_idx = np.arange(0, self.option.batch_size)
             batch = self.data_array[batch_idx, :]
-            start_entities = batch[:, 0]
+            start_entities = batch[:, 2]
             relations = batch[:, 1]
-            answers = batch[:, 2]
+            answers = batch[:, 0]
             if self.option.use_cuda:
                 start_entities_np = start_entities.cpu().numpy()
                 relations_np = relations.cpu().numpy()

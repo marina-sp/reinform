@@ -115,10 +115,16 @@ class Trainer():
             all_logits = []
             all_action_id = []
 
+            sequences = torch.stack((answers,queries,start_entities), -1)
+
             for step in range(self.option.max_step_length):
                 loss, new_state, logits, action_id, next_entities, chosen_relation= \
                     self.agent.step(prev_state, prev_relation, current_entities,
                                     start_entities, queries, answers, all_correct, step)
+
+                sequences = torch.cat((sequences, chosen_relation.reshape((sequences.shape[0],-1))),1)
+                sequences = torch.cat((sequences, next_entities.reshape((sequences.shape[0],-1))),1)
+
                 all_loss.append(loss)
                 all_logits.append(logits)
                 all_action_id.append(action_id)

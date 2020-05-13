@@ -42,7 +42,7 @@ class Agent(nn.Module):
         self.option = option
         self.data_loader = data_loader
         self.graph = graph
-        self.relation_embedding = nn.Embedding(self.option.num_relation, self.option.relation_embed_size)
+        self.relation_embedding = nn.Embedding(self.data_loader.kg.reserved_vocab+self.option.num_relation+self.option.num_entity, self.option.relation_embed_size)
         torch.nn.init.xavier_uniform_(self.relation_embedding.weight)
         self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
@@ -66,7 +66,7 @@ class Agent(nn.Module):
         output = self.policy_mlp(state_query)
 
         prelim_scores = torch.sum(torch.mul(output, action), dim=-1)
-        dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]
+        dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["PAD"]
         mask = torch.eq(out_relations_id, dummy_relations_id)
         dummy_scores = torch.ones_like(prelim_scores) * (-99999)
         scores = torch.where(mask, dummy_scores, prelim_scores)
@@ -104,7 +104,7 @@ class Agent(nn.Module):
         output = self.policy_mlp(state_query)
 
         prelim_scores = torch.sum(torch.mul(output, action), dim=-1)
-        dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]
+        dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["PAD"]
         mask = torch.eq(out_relations_id, dummy_relations_id)
         dummy_scores = torch.ones_like(prelim_scores) * (-9999)
         scores = torch.where(mask, dummy_scores, prelim_scores)
@@ -146,7 +146,7 @@ class Agent(nn.Module):
         self.graph = graph
 
     def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.relation2num["Strat"]
+        dummy_start_item = self.data_loader.relation2num["START"]
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
