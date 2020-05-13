@@ -97,7 +97,7 @@ class Agent(nn.Module):
         chosen_relation = torch.gather(out_relations_id, dim=1, index=action_id).squeeze()
         next_entities = torch.gather(out_entities_id, dim=1, index=action_id).squeeze()
         action_id = action_id.squeeze()
-        assert (next_entities == self.graph.get_next(current_entities, action_id)).all()
+        # assert (next_entities == self.graph.get_next(current_entities, action_id)).all()
 
         sss = self.data_loader.num2relation[(int)(queries[0])] + "\t" + self.data_loader.num2relation[(int)(chosen_relation[0])]
         #log.info(sss)
@@ -147,7 +147,7 @@ class Agent(nn.Module):
         chosen_relation = torch.gather(out_relations_id, dim=1, index=top_k_action_id).view(-1)
         chosen_entities = torch.gather(out_entities_id, dim=1, index=top_k_action_id).view(-1)
         log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
-        assert (log_current_prob == top_k_log_prob.view(-1)).all()
+        # assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
         top_k_action_id_state = top_k_action_id.unsqueeze(2).repeat(1, 1, self.option.state_embed_size)
         chosen_state = \
