@@ -95,7 +95,7 @@ class Agent(nn.Module):
         action_id = torch.multinomial(input=logits.exp(), num_samples=1, generator=self.generator)  # B x 1
         #action_id = Categorical(logits=logits).sample((1,)).view(-1, 1)  # B x 1
 
-        print(" ".join(str(e.item()) for e in action_id.flatten()))
+        # print(" ".join(str(e.item()) for e in action_id.flatten())) # check random state
 
         # loss # lookup tf.nn.sparse_softmax_cross_entropy_with_logits
         # 5a.

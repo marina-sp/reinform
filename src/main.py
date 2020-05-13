@@ -41,7 +41,7 @@ def main():
 
     parser.add_argument('--train_times', default=20, type=int)
     parser.add_argument('--test_times', default=100, type=int)
-    parser.add_argument("--train_batch", default=5, type=int)
+    parser.add_argument("--train_batch", default=1000, type=int)
     parser.add_argument('--max_out', default=200, type=int)
     parser.add_argument('--max_step_length', default=3, type=int)
 
