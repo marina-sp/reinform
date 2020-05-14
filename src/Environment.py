@@ -22,11 +22,13 @@ class Environment():
     def yield_next_batch_train(self):
         while True:
             batch_idx = self.random_state.randint(0, len(self.data_array), size=self.option.batch_size)
-            #batch_idx = np.arange(0, self.option.batch_size)
             batch = self.data_array[batch_idx, :]
-            start_entities = batch[:, 0]
+            # start_entities = batch[:, 0]
+            # relations = batch[:, 1]
+            # answers = batch[:, 2]
+            start_entities = batch[:, 2]
             relations = batch[:, 1]
-            answers = batch[:, 2]
+            answers = batch[:, 0]
 
             start_entities_np = start_entities.numpy()
             relations_np = relations.numpy()
@@ -52,9 +54,13 @@ class Environment():
                 current_idx = test_data_count
 
             batch = self.data_array[batch_idx, :]
-            start_entities = batch[:,0]
+            # start_entities = batch[:, 0]
+            # relations = batch[:, 1]
+            # answers = batch[:, 2]
+
+            start_entities = batch[:,2]
             relations = batch[:, 1]
-            answers = batch[:, 2]
+            answers = batch[:, 0]
 
             start_entities_np = start_entities.numpy()
             relations_np = relations.numpy()

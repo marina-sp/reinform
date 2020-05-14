@@ -5,6 +5,7 @@ from Graph import Knowledge_graph
 from Environment import Environment
 from Baseline import ReactiveBaseline
 import numpy as np
+from transformers import BertForMaskedLM
 
 
 class Trainer():
@@ -41,13 +42,13 @@ class Trainer():
         return entropy_loss
 
     def calc_reinforce_loss(self, all_loss, all_logits, cum_discounted_reward):
-        # checked
+
         loss = torch.stack(all_loss, dim=1)  # [B, T]
         base_value = self.baseline.get_baseline_value()
         final_reward = cum_discounted_reward - base_value
 
         reward_mean = torch.mean(final_reward)
-        reward_std = torch.sqrt(torch.var(final_reward)) + 1e-6
+        reward_std = torch.std(final_reward) + 1e-6
         final_reward = torch.div(final_reward - reward_mean, reward_std)
 
         loss = torch.mul(loss, final_reward)  # [B, T]
@@ -67,6 +68,11 @@ class Trainer():
         batch_counter = 0
         current_decay_count = 0
 
+        model = BertForMaskedLM.from_pretrained("../../mastersthesis/transformers/knowledge_graphs/output_minevra_a/")
+        if self.option.use_cuda:
+            model.to("cuda")
+        model.eval()
+
         for start_entities, queries, answers, all_correct in environment.get_next_batch():
             if batch_counter > self.option.train_batch:
                 break
@@ -78,11 +84,11 @@ class Trainer():
                 self.decaying_beta *= self.option.decay_rate
                 current_decay_count = 0
 
-            # agent. __call__ from tf
             batch_size = start_entities.shape[0]
             prev_state = [torch.zeros(start_entities.shape[0], self.option.state_embed_size),
                           torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
-            prev_relation = self.agent.get_dummy_start_relation(batch_size)
+            # prev_relation = self.agent.get_dummy_start_relation(batch_size)
+            prev_relation = queries
             current_entities = start_entities
             queries_cpu = queries.detach().clone()
             if self.option.use_cuda:
@@ -96,14 +102,19 @@ class Trainer():
             all_logits = []
             all_action_id = []
 
+            sequences = torch.stack((answers, queries, start_entities), -1)
 
             for step in range(self.option.max_step_length):
                 actions_id = train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
                                                  answers, all_correct, step)
                 if self.option.use_cuda:
-                    actions_id = actions_id.cuda()                    
+                    actions_id = actions_id.cuda()
                 loss, new_state, logits, action_id, next_entities, chosen_relation= \
                     self.agent.step(prev_state, prev_relation, current_entities, actions_id, queries)
+
+                sequences = torch.cat((sequences, chosen_relation.reshape((sequences.shape[0], -1))), 1)
+                sequences = torch.cat((sequences, next_entities.reshape((sequences.shape[0], -1))), 1)
+
                 all_loss.append(loss)
                 all_logits.append(logits)
                 all_action_id.append(action_id)
@@ -111,7 +122,13 @@ class Trainer():
                 current_entities = next_entities
                 prev_state = new_state
 
-            rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
+            # todo: introduce options for reward selection
+            #rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
+            top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, model)
+            rewards = torch.from_numpy(rewards_np)
+            if self.option.use_cuda:
+                rewards = rewards.cuda()
+
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
             reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
 
@@ -126,7 +143,6 @@ class Trainer():
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
 
-            # backprop -- tf: trainer.bp func
             self.baseline.update(torch.mean(cum_discounted_reward))
             self.agent.zero_grad()
             reinforce_loss.backward()
@@ -138,13 +154,18 @@ class Trainer():
             f.write("Begin test\n")
         with torch.no_grad():
             self.agent.cpu()
-            self.option.use_cuda = False
 
             test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_test_graph_data())
             test_data = self.data_loader.get_test_data()
             test_graph.update_all_correct(test_data)
             test_graph.update_all_correct(self.data_loader.get_valid_data())
             environment = Environment(self.option, test_graph, test_data, "test")
+
+            model = BertForMaskedLM.from_pretrained(self.option.bert_path)
+            if self.option.use_cuda:
+                model.to("cuda")
+                self.option.use_cuda = False
+            model.eval()
 
             total_examples = len(test_data)
             all_final_reward_1 = 0
@@ -157,10 +178,13 @@ class Trainer():
             # _variable + all correct: with rollouts; variable: original data
             for _start_entities, _queries, _answers, start_entities, queries, answers, all_correct\
                     in environment.get_next_batch():
+                sequences = torch.stack((answers,queries,start_entities), -1)
+
                 batch_size = len(start_entities)
                 prev_state = [torch.zeros(start_entities.shape[0], self.option.state_embed_size),
                               torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
-                prev_relation = self.agent.get_dummy_start_relation(start_entities.shape[0])
+                # prev_relation = self.agent.get_dummy_start_relation(start_entities.shape[0])
+                prev_relation = queries
                 current_entities = start_entities
                 log_current_prob = torch.zeros(start_entities.shape[0])
                 if self.option.use_cuda:
@@ -170,19 +194,22 @@ class Trainer():
                     log_current_prob = log_current_prob.cuda()
 
                 for step in range(self.option.max_step_length):
-                    if step == 0:
+                    if True: # step == 0:
                         actions_id = test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
                                                         step)
                         chosen_state, chosen_relation, chosen_entities, log_current_prob = \
                             self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
                                                  log_current_prob, queries, batch_size)
 
-                    else:
-                        actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
-                                                        all_correct, step)
-                        chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                            self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
-                                                 log_current_prob, _queries, batch_size)
+                    # else:
+                    #     actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
+                    #                                     all_correct, step)
+                    #     chosen_state, chosen_relation, chosen_entities, log_current_prob = \
+                    #         self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
+                    #                              log_current_prob, _queries, batch_size)
+
+                    sequences = torch.cat((sequences, chosen_relation.reshape((sequences.shape[0], -1))), 1)
+                    sequences = torch.cat((sequences, chosen_entities.reshape((sequences.shape[0], -1))), 1)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
@@ -197,40 +224,56 @@ class Trainer():
                 r_rank = 0
 
                 # B x TIMES
-                rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
-                rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
+                # todo: flexible reward
+                #rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
+                #rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
+                top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, model)
 
-                if self.option.use_cuda:
-                    current_entities = current_entities.cpu()
-                current_entities_np = current_entities.numpy()
-                current_entities_np = current_entities_np.reshape(-1, self.option.test_times)
+                # todo: unify output shape of beam search
+                # if self.option.use_cuda:
+                #     current_entities = current_entities.cpu()
+                # current_entities_np = current_entities.numpy()
+                # current_entities_np = current_entities_np.reshape(-1, self.option.test_times)
 
-                for line_id in range(rewards.shape[0]):
-                    seen = set()
-                    pos = 0
-                    find_ans = False
-                    for loc_id in range(rewards.shape[1]):
-                        if rewards[line_id][loc_id] == self.positive_reward:
-                            find_ans = True
-                            break
-                        if current_entities_np[line_id][loc_id] not in seen:
-                            seen.add(current_entities_np[line_id][loc_id])
-                            pos += 1
+                # for line_id in range(rewards.shape[0]):
+                #     seen = set()
+                #     pos = 0
+                #     find_ans = False
+                #     for loc_id in range(rewards.shape[1]):
+                #         if rewards[line_id][loc_id] == self.positive_reward:
+                #             find_ans = True
+                #             break
+                #         if current_entities_np[line_id][loc_id] not in seen:
+                #             seen.add(current_entities_np[line_id][loc_id])
+                #             pos += 1
+                # if find_ans:
+                #     if pos < 20:
+                #         final_reward_20 += 1
+                #         if pos < 10:
+                #             final_reward_10 += 1
+                #             if pos < 5:
+                #                 final_reward_5 += 1
+                #                 if pos < 3:
+                #                     final_reward_3 += 1
+                #                     if pos < 1:
+                #                         final_reward_1 += 1
+                #     r_rank += 1.0 / (pos + 1)
+                # else:
+                #     r_rank += 0  # an appropriate last rank = 1.0 / self.data_loader.num_entity, but no big difference
 
-                    if find_ans:
-                        if pos < 20:
-                            final_reward_20 += 1
-                            if pos < 10:
-                                final_reward_10 += 1
-                                if pos < 5:
-                                    final_reward_5 += 1
-                                    if pos < 3:
-                                        final_reward_3 += 1
-                                        if pos < 1:
-                                            final_reward_1 += 1
-                        r_rank += 1.0 / (pos + 1)
-                    else:
-                        r_rank += 0 # an appropriate last rank = 1.0 / self.data_loader.num_entity, but no big difference
+                for pos in ranks_np:
+                    if pos < 20:
+                        final_reward_20 += 1
+                        if pos < 10:
+                            final_reward_10 += 1
+                            if pos < 5:
+                                final_reward_5 += 1
+                                if pos < 3:
+                                    final_reward_3 += 1
+                                    if pos < 1:
+                                        final_reward_1 += 1
+
+                    r_rank += 1.0 / (pos + 1)
 
                     #log.info(("pos", (pos, find_ans, relations[line_id])))
 

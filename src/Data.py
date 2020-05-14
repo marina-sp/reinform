@@ -3,6 +3,7 @@ from collections import defaultdict
 import numpy as np
 import copy
 
+from kg_rl import *
 
 class Data_loader():
     def __init__(self, option):
@@ -25,39 +26,53 @@ class Data_loader():
         self.num_operator = 0
 
         data_path = os.path.join(self.option.datadir, self.option.dataset)
+
+        self.kg = CustomKG("freebase15k_237")
+        self.kg.prepare_data()
+        self.kg.add_reversed_relations()
+        self.kg.add_extra_relations()
+
         self.load_data_all(data_path)
 
     def load_data_all(self, path):
-        train_data_path = os.path.join(path, "train.txt")
-        test_data_path = os.path.join(path, "test.txt")
-        valid_data_path = os.path.join(path, "valid.txt")
-        entity_path = os.path.join(path, "entities.txt")
-        relations_path = os.path.join(path, "relations.txt")
+        # train_data_path = os.path.join(path, "train.txt")
+        # test_data_path = os.path.join(path, "test.txt")
+        # valid_data_path = os.path.join(path, "valid.txt")
+        # entity_path = os.path.join(path, "entities.txt")
+        # relations_path = os.path.join(path, "relations.txt")
 
-        self.entity2num, self.num2entity = self._load_dict(entity_path)
-        self.relation2num, self.num2relation = self._load_dict(relations_path)
-        assert len(self.entity2num) == len(self.num2entity)
-        assert len(self.relation2num) == len(self.num2relation)
-        self._augment_reverse_relation()
-        self.num2relation[0] = "Unk"
-        self.num2entity[0] = "Unk"
-        self._add_item(self.relation2num, self.num2relation, "Equal")
-        self._add_item(self.relation2num, self.num2relation, "Pad")
-        self._add_item(self.relation2num, self.num2relation, "Start")
-        self._add_item(self.entity2num, self.num2entity, "Pad")
-        print(self.relation2num)
+        self.entity2num, self.num2entity = self.kg.entity2idx, self.kg.idx2entity
+        self.relation2num, self.num2relation = self.kg.relation2idx, self.kg.idx2relation
+        # todo
+        # assert len(self.entity2num) == len(self.num2entity)
+        # assert len(self.relation2num) == len(self.num2relation)
+        # self._augment_reverse_relation()
+        # self.num2relation[0] = "Unk"
+        # self.num2entity[0] = "Unk"
 
-        self.num_relation = len(self.num2relation)
-        self.num_entity = len(self.num2entity)
+        # self._augment_reverse_relation()
+        # self._add_item(self.relation2num, self.num2relation, "Equal")
+        # self._add_item(self.relation2num, self.num2relation, "Pad")
+        # self._add_item(self.relation2num, self.num2relation, "Start")
+        # self._add_item(self.entity2num, self.num2entity, "Pad")
+        # print(self.relation2num)
+
+        self.num_relation = len(self.relation2num)
+        self.num_entity = len(self.entity2num) + self.kg.reserved_vocab
         print("num_relation", self.num_relation)
         print("num_entity", self.num_entity)
 
-        self.train_data, self.inv_train_data = self._load_data(train_data_path)
-        self.valid_data, self.inv_valid_data = self._load_data(valid_data_path)
-        self.test_data, self.inv_test_data = self._load_data(test_data_path)
+        # todo: check inverse relations in data
+        self.train_data, self.inv_train_data = self.load_data("train"), []
+        self.valid_data, self.inv_valid_data = self.load_data("valid"), []
+        self.test_data, self.inv_test_data = self.load_data("test"), []
 
-        print("total seen relations", len(self.relation2num) - 3)
-        print("total seen entities", len(self.entity2num) - 1)
+        # todo
+        # print("total seen relations", len(self.relation2num) - 3)
+        # print("total seen entities", len(self.entity2num) - 1)
+
+    def load_data(self, data):
+        return [[t.h, t.r, t.t] for t in self.kg.triplets[data]]
 
     def _load_data(self, path):
         data = [l.strip().split("\t") for l in open(path, "r").readlines()]
@@ -69,20 +84,10 @@ class Data_loader():
             tail = self.entity2num[item[2]]
             relation = self.relation2num[item[1]]
             triplets.append([head, relation, tail])
-            #if self.include_reverse:
+
             inv_relation = self.relation2num["inv_" + item[1]]
             inv_triplets.append([tail, inv_relation, head])
         return triplets, inv_triplets
-
-    # def _load_ddd(self, path):
-    #     data = [l.strip().split("\t") for l in open(path, "r").readlines()]
-    #     triplets = list()
-    #     for item in data:
-    #         head = self.entity2num[item[0]]
-    #         tail = self.entity2num[item[2]]
-    #         relation = self.relation2num[item[1]]
-    #         triplets.append([head, relation, tail])
-    #     return triplets
 
     def _load_dict(self, path, first_num=1):
         obj2num = defaultdict(int)

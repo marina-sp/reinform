@@ -4,6 +4,7 @@ import torch
 import logging as log
 from torch.distributions.categorical import Categorical
 from collections import defaultdict
+import copy
 
 class Policy_step(nn.Module):
     def __init__(self, option):
@@ -41,7 +42,9 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         self.option = option
         self.data_loader = data_loader
-        self.relation_embedding = nn.Embedding(self.option.num_relation, self.option.relation_embed_size)
+        # self.relation_embedding = nn.Embedding(self.option.num_relation, self.option.relation_embed_size)
+        self.relation_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
+                                               self.option.relation_embed_size)
         self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
 
@@ -88,14 +91,13 @@ class Agent(nn.Module):
         prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
 
         # Masking PAD actions
-        dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.relation2num["Pad"]  # B x n_actions
+        dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
         mask = torch.eq(out_relations_id, dummy_relations_id)  # B x n_actions
         dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
         scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
         logits = scores.log_softmax(dim=-1)  # B x n_actions
 
         return logits, out_relations_id, out_entities_id, new_state
-
 
     def step(self, *params):
         logits, out_relations_id, out_entities_id, new_state = self._step(*params)
@@ -143,12 +145,8 @@ class Agent(nn.Module):
         log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
-        top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
-
-        #new_state_0 = new_state[0].repeat_interleave(self.option.max_out)\
-        #    .view(batch_size, -1, self.option.state_embed_size)
-        #new_state_1 = new_state[1].repeat_interleave(self.option.max_out) \
-        #    .view(batch_size, -1, self.option.state_embed_size)
+        # top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
+        top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
 
         # copy
         new_state_0 = new_state[0].unsqueeze(1).repeat(1, self.option.max_out, 1)
@@ -174,7 +172,7 @@ class Agent(nn.Module):
         return chosen_state, chosen_relation, chosen_entities, log_current_prob
 
     def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.relation2num["Start"]
+        dummy_start_item = self.data_loader.kg.pad_token_id
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
@@ -182,6 +180,46 @@ class Agent(nn.Module):
         reward = (current_entities == answers)
         reward = torch.where(reward, positive_reward, negative_reward)
         return reward
+
+    def get_context_reward(self, sequences, model, metric=1):
+
+        inputs = copy.deepcopy(sequences)
+        inputs[:,0] = self.data_loader.kg.mask_token_id
+        cls_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.cls_token_id
+        sep_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.sep_token_id
+        inputs = inputs.type(torch.IntTensor)
+        cls_tensor = cls_tensor.type(torch.IntTensor)
+        sep_tensor = sep_tensor.type(torch.IntTensor)
+        inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
+        labels = torch.ones_like(inputs)*-1
+        labels[:,1]=sequences[:,0]
+        if self.option.use_cuda:
+            inputs = inputs.cuda()
+            labels = labels.cuda()
+        outputs = model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
+        prediction_scores = outputs[1]
+        prediction_scores_prob = torch.nn.Softmax(dim=-1)(prediction_scores)
+        ranked_prediction_scores = torch.argsort(prediction_scores, dim=-1)
+        non_zero_idx = (labels != -1).nonzero()
+        rewards = []
+        pred_prob = []
+        ret_ranks = []
+        for id in non_zero_idx:
+            id_1 = id[0]
+            id_2 = id[1]
+            id_3 = labels[id_1][id_2]
+            ranks = np.flip(ranked_prediction_scores[id_1][id_2].to("cpu").numpy(),0).copy().tolist()
+            to_filter = self.data_loader.kg.tr_h[(inputs[id_1.item()][3].item(),inputs[id_1.item()][2].item())]
+
+            ranks = [x for x in ranks if ((x not in set(to_filter) and  x < self.option.num_entity) or x == id_3.item())]
+            rank = ranks.index(id_3) + 1
+            ret_ranks.append(rank)
+            if rank <= metric:
+                rewards.append(1)
+            else:
+                rewards.append(0)
+            pred_prob.append(prediction_scores_prob[id_1][id_2][id_3].item())
+        return np.array(rewards), np.array(pred_prob), np.array(ret_ranks)
 
     def print_parameter(self):
         for param in self.named_parameters():

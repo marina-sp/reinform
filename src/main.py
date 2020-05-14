@@ -45,6 +45,10 @@ def main():
     parser.add_argument('--max_out', default=200, type=int)
     parser.add_argument('--max_step_length', default=3, type=int)
 
+    # Reward configuration
+    parser.add_argument('--bert_path', default='../../mastersthesis/transformers/knowledge_graphs/output_minevra_a/',
+                        type=str)
+
     # Learning configuration
     parser.add_argument('--load_model', default='', type=str)
     parser.add_argument('--learning_rate', default=0.001, type=float)
