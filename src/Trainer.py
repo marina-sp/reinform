@@ -122,7 +122,7 @@ class Trainer():
                         
             # todo: introduce options for reward selection
             #rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
-            top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences)
+            top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, all_correct)
             rewards = torch.from_numpy(rewards_np)
             if self.option.use_cuda:
                 rewards = rewards.cuda()
@@ -220,7 +220,8 @@ class Trainer():
                 #rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
                 #rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
                 
-                top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, test=True)
+                top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(
+                    sequences, all_correct[::self.option.test_times], test=True)
 
                 # todo: unify output shape of beam search
                 # if self.option.use_cuda:

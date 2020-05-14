@@ -185,7 +185,7 @@ class Agent(nn.Module):
         reward = torch.where(reward, positive_reward, negative_reward)
         return reward
 
-    def get_context_reward(self, sequences, metric=1, test=False):
+    def get_context_reward(self, sequences, all_correct, metric=1, test=False):
 
         inputs = copy.deepcopy(sequences)
         inputs[:,0] = self.data_loader.kg.mask_token_id
@@ -201,31 +201,31 @@ class Agent(nn.Module):
             inputs = inputs.cuda()
             labels = labels.cuda()
         _, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
-        prediction_scores = output#.cpu()
-        prediction_scores_prob = prediction_scores.softmax(dim=-1)
-        if test:
-            ranked_prediction_scores = torch.argsort(prediction_scores, dim=-1)
-        non_zero_idx = (labels != -1).nonzero()
-        rewards = []
-        pred_prob = []
-        ret_ranks = []
-        for id in non_zero_idx:
-            id_1 = id[0]
-            id_2 = id[1]
-            id_3 = labels[id_1][id_2]
-            pred_prob.append(prediction_scores_prob[id_1][id_2][id_3].item())
-            if test:
-                ranks = np.flip(ranked_prediction_scores[id_1][id_2].to("cpu").numpy(),0).copy().tolist()
-                to_filter = self.data_loader.kg.tr_h[(inputs[id_1.item()][3].item(),inputs[id_1.item()][2].item())]
+        #output = torch.randn(inputs.shape[0], 9, len(self.data_loader.kg.vocab))
+        prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].cpu().numpy()
+        prediction_prob = prediction_scores.softmax(dim=-1).numpy()
 
-                ranks = [x for x in ranks if ((x not in set(to_filter) and  x < self.option.num_entity) or x == id_3.item())]
-                rank = ranks.index(id_3) + 1
-                ret_ranks.append(rank)
-                if rank <= metric:
-                    rewards.append(1)
-                else:
-                    rewards.append(0)
-        return np.array(rewards), np.array(pred_prob), np.array(ret_ranks)
+        rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
+
+        if not test:
+            return None, rewards_prob, None
+
+        rewards_rank = np.empty_like(labels).astype(np.int)
+        ranks = np.empty_like(labels).astype(np.int)
+
+        ranked_token_ids = torch.argsort(prediction_scores, descending=True, dim=-1).numpy()
+
+        for i, label in enumerate(labels.tolist()):
+            ranked = ranked_token_ids[i].tolist()
+            ranked = [x for x in ranked if ((x not in all_correct[i] and x < self.option.num_entity) or x == label)]
+            rank = ranked.index(label) + 1
+
+            ranks[i] = rank
+            if rank <= metric:
+                rewards_rank[i] = 1
+            else:
+                rewards_rank[i] = 0
+        return rewards_rank, rewards_prob, ranks
 
     def print_parameter(self):
         for param in self.named_parameters():
