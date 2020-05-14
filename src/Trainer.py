@@ -5,6 +5,7 @@ from Graph import Knowledge_graph
 from Environment import Environment
 from Baseline import ReactiveBaseline
 import numpy as np
+from transformers import BertForMaskedLM
 
 
 class Trainer():
@@ -90,6 +91,11 @@ class Trainer():
         current_decay = self.decaying_beta_init
         current_decay_count = 0
 
+        model = BertForMaskedLM.from_pretrained("../../mastersthesis/transformers/knowledge_graphs/output_minevra_a/")
+        if self.option.use_cuda:
+            model.to("cuda")
+        model.eval()
+
         for start_entities, queries, answers, all_correct in environment.get_next_batch():
             if batch_counter > self.option.train_batch:
                 break
@@ -133,8 +139,11 @@ class Trainer():
                 current_entities = next_entities
                 prev_state = new_state
 
-            rewards_np = self.agent.get_reward(current_entities, answers, all_correct,
-                                            self.positive_reward, self.negative_reward)
+            top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, model)
+
+            # rewards_np = self.agent.get_reward(current_entities, answers, all_correct,
+            #                                 self.positive_reward, self.negative_reward)
+
             rewards = torch.from_numpy(rewards_np)
             if self.option.use_cuda:
                 rewards = rewards.cuda()
@@ -160,6 +169,11 @@ class Trainer():
             environment = Environment(self.option, test_graph, test_data, "test")
             self.agent.set_graph(test_graph)
 
+            model = BertForMaskedLM.from_pretrained("../../mastersthesis/transformers/knowledge_graphs/output_minevra_a/")
+            if self.option.use_cuda:
+                model.to("cuda")
+            model.eval()
+
             total_examples = len(test_data)
             all_final_reward_1 = 0
             all_final_reward_3 = 0
@@ -170,10 +184,13 @@ class Trainer():
 
             for _start_entities, _relations, _answers, start_entities, relations, answers, all_correct\
                     in environment.get_next_batch():
+                sequences = torch.stack((answers,relations,start_entities), -1)
+
                 batch_size = len(start_entities)
                 prev_state = [torch.zeros(start_entities.shape[0], self.option.state_embed_size),
                               torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
-                prev_relation = self.agent.get_dummy_start_relation(start_entities.shape[0])
+                # prev_relation = self.agent.get_dummy_start_relation(start_entities.shape[0])
+                prev_relation = relations
                 current_entities = start_entities
                 log_current_prob = torch.zeros(start_entities.shape[0])
                 if self.option.use_cuda:
@@ -183,15 +200,18 @@ class Trainer():
                     log_current_prob = log_current_prob.cuda()
 
                 for step in range(self.option.max_step_length):
-                    if step == 0:
-                        chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                            self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
-                                                 start_entities, relations, answers, all_correct, batch_size, step)
+                    # if step == 0:
+                    chosen_state, chosen_relation, chosen_entities, log_current_prob = \
+                        self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
+                                                start_entities, relations, answers, all_correct, batch_size, step)
 
-                    else:
-                        chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                            self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
-                                                 _start_entities, _relations, _answers, all_correct, batch_size, step)
+                    # else:
+                    #     chosen_state, chosen_relation, chosen_entities, log_current_prob = \
+                    #         self.agent.test_step(prev_state, prev_relation, current_entities, log_current_prob,
+                    #                              _start_entities, _relations, _answers, all_correct, batch_size, step)
+
+                    sequences = torch.cat((sequences, chosen_relation.reshape((sequences.shape[0],-1))),1)
+                    sequences = torch.cat((sequences, chosen_entities.reshape((sequences.shape[0],-1))),1)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
@@ -205,41 +225,41 @@ class Trainer():
                 final_reward_20 = 0
                 r_rank = 0
 
-                rewards = self.agent.get_reward(current_entities, _answers, all_correct,
-                                                self.positive_reward, self.negative_reward)
-                rewards = np.array(rewards)
-                rewards = rewards.reshape(-1, self.option.test_times)
+                top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, model)
+                # rewards = self.agent.get_reward(current_entities, _answers, all_correct,
+                #                                 self.positive_reward, self.negative_reward)
+                # rewards = np.array(rewards)
+                # rewards = rewards.reshape(-1, self.option.test_times)
 
-                if self.option.use_cuda:
-                    current_entities = current_entities.cpu()
-                current_entities_np = current_entities.numpy()
-                current_entities_np = current_entities_np.reshape(-1, self.option.test_times)
+                # if self.option.use_cuda:
+                #     current_entities = current_entities.cpu()
+                # current_entities_np = current_entities.numpy()
+                # current_entities_np = current_entities_np.reshape(-1, self.option.test_times)
 
-                for line_id in range(rewards.shape[0]):
-                    seen = set()
-                    pos = 0
-                    find_ans = False
-                    for loc_id in range(rewards.shape[1]):
-                        if rewards[line_id][loc_id] == self.positive_reward:
-                            find_ans = True
-                            break
-                        if current_entities_np[line_id][loc_id] not in seen:
-                            seen.add(current_entities_np[line_id][loc_id])
-                            pos += 1
-
-                    if find_ans:
-                        if pos < 20:
-                            final_reward_20 += 1
-                            if pos < 10:
-                                final_reward_10 += 1
-                                if pos < 5:
-                                    final_reward_5 += 1
-                                    if pos < 3:
-                                        final_reward_3 += 1
-                                        if pos < 1:
-                                            final_reward_1 += 1
-                    else:
-                        r_rank += 1.0 / (pos + 1)
+                # for line_id in range(rewards.shape[0]):
+                #     seen = set()
+                #     pos = 0
+                #     find_ans = False
+                #     for loc_id in range(rewards.shape[1]):
+                #         if rewards[line_id][loc_id] == self.positive_reward:
+                #             find_ans = True
+                #             break
+                #         if current_entities_np[line_id][loc_id] not in seen:
+                #             seen.add(current_entities_np[line_id][loc_id])
+                #             pos += 1
+                for pos in ranks_np:
+                    if pos < 20:
+                        final_reward_20 += 1
+                        if pos < 10:
+                            final_reward_10 += 1
+                            if pos < 5:
+                                final_reward_5 += 1
+                                if pos < 3:
+                                    final_reward_3 += 1
+                                    if pos < 1:
+                                        final_reward_1 += 1
+                    
+                    r_rank += 1.0 / (pos + 1)
 
                     #log.info(("pos", (pos, find_ans, relations[line_id])))
 

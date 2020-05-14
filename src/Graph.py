@@ -25,7 +25,7 @@ class Knowledge_graph():
         out_array[:, :, 1] *= self.data_loader.kg.pad_token_id
         more_out_count = 0
         for head in all_out_dict:
-            out_array[head, 0, 0] = self.data_loader.relation2num["NO_OP"]
+            out_array[head, 0, 0] = self.data_loader.kg.pad_token_id
             out_array[head, 0, 1] = head
             num_out = 1
             for relation, tail in all_out_dict[head]:
@@ -45,14 +45,14 @@ class Knowledge_graph():
     # 获取从图谱上current_entities的out_relations, out_entities
     def get_out(self, current_entities, start_entities, queries, answers, all_correct, step):
         ret = copy.deepcopy(self.out_array[current_entities, :, :])
-        # for i in range(current_entities.shape[0]):
-        #     if current_entities[i] == start_entities[i]:
-        #         relations = ret[i, :, 0]
-        #         entities = ret[i, :, 1]
-        #         mask = queries[i].eq(relations) & answers[i].eq(entities)
-        #         #mask = queries[i].eq(relations)
-        #         ret[i, :, 0][mask] = self.data_loader.relation2num["Pad"]
-        #         ret[i, :, 1][mask] = self.data_loader.entity2num["Pad"]
+        for i in range(current_entities.shape[0]):
+            if current_entities[i] == start_entities[i]:
+                relations = ret[i, :, 0]
+                entities = ret[i, :, 1]
+                mask = queries[i].eq(relations) & answers[i].eq(entities)
+                #mask = queries[i].eq(relations)
+                ret[i, :, 0][mask] = self.data_loader.kg.pad_token_id
+                ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
 
         #     if step == self.option.max_step_length - 1:
         #         relations = ret[i, :, 0]

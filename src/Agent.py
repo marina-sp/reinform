@@ -121,7 +121,8 @@ class Agent(nn.Module):
         log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
-        top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)
+        # top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)
+        top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
 
         new_state_0 = new_state[0].repeat_interleave(self.option.max_out)\
             .view(batch_size, -1, self.option.state_embed_size)
@@ -158,6 +159,43 @@ class Agent(nn.Module):
         choicelist = [positive_reward, negative_reward]
         reward = np.select(condlist, choicelist)
         return reward
+
+    def get_context_reward(self, sequences, model, metric=1):
+        
+        inputs = copy.deepcopy(sequences)
+        inputs[:,0] = self.data_loader.kg.mask_token_id
+        cls_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.cls_token_id
+        sep_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.sep_token_id
+        inputs = inputs.type(torch.IntTensor)
+        cls_tensor = cls_tensor.type(torch.IntTensor)
+        sep_tensor = sep_tensor.type(torch.IntTensor)
+        inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
+        labels = torch.ones_like(inputs)*-1
+        labels[:,1]=sequences[:,0]
+        outputs = model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
+        prediction_scores = outputs[1]
+        prediction_scores_prob = torch.nn.Softmax(dim=-1)(prediction_scores)
+        ranked_prediction_scores = torch.argsort(prediction_scores, dim=-1)
+        non_zero_idx = (labels != -1).nonzero()
+        rewards = []
+        pred_prob = []
+        ret_ranks = []
+        for id in non_zero_idx:
+            id_1 = id[0]
+            id_2 = id[1]
+            id_3 = labels[id_1][id_2]
+            ranks = np.flip(ranked_prediction_scores[id_1][id_2].to("cpu").numpy(),0).copy().tolist()
+            to_filter = self.data_loader.kg.tr_h[(inputs[id_1.item()][3].item(),inputs[id_1.item()][2].item())]
+
+            ranks = [x for x in ranks if ((x not in set(to_filter) and  x < self.option.num_entity) or x == id_3.item())]
+            rank = ranks.index(id_3) + 1
+            ret_ranks.append(rank)
+            if rank <= metric:
+                rewards.append(1)
+            else:
+                rewards.append(0)
+            pred_prob.append(prediction_scores_prob[id_1][id_2][id_3].item())
+        return np.array(rewards), np.array(pred_prob), np.array(ret_ranks)
 
     def print_parameter(self):
         for param in self.named_parameters():
