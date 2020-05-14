@@ -172,6 +172,9 @@ class Agent(nn.Module):
         inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
         labels = torch.ones_like(inputs)*-1
         labels[:,1]=sequences[:,0]
+        if self.option.use_cuda:
+            inputs = inputs.cuda()
+            labels = labels.cuda()
         outputs = model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
         prediction_scores = outputs[1]
         prediction_scores_prob = torch.nn.Softmax(dim=-1)(prediction_scores)
