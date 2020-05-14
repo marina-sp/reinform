@@ -1,11 +1,10 @@
 import torch
-import os
+import os, time
 import logging as log
 from Graph import Knowledge_graph
 from Environment import Environment
 from Baseline import ReactiveBaseline
 import numpy as np
-from transformers import BertForMaskedLM
 
 
 class Trainer():
@@ -61,6 +60,9 @@ class Trainer():
     def train(self):
         with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "w", encoding='UTF-8') as f:
             f.write("Begin train\n")
+        if self.option.use_cuda: 
+            self.agent.cuda()
+
         train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_train_graph_data())
         train_data = self.data_loader.get_train_data()
         environment = Environment(self.option, train_graph, train_data, "train")
@@ -68,12 +70,8 @@ class Trainer():
         batch_counter = 0
         current_decay_count = 0
 
-        model = BertForMaskedLM.from_pretrained("../../mastersthesis/transformers/knowledge_graphs/output_minevra_a/")
-        if self.option.use_cuda:
-            model.to("cuda")
-        model.eval()
-
         for start_entities, queries, answers, all_correct in environment.get_next_batch():
+            start = time.time()
             if batch_counter > self.option.train_batch:
                 break
             else:
@@ -102,7 +100,7 @@ class Trainer():
             all_logits = []
             all_action_id = []
 
-            sequences = torch.stack((answers, queries, start_entities), -1)
+            sequences = torch.stack((answers, queries_cpu, start_entities), -1)
 
             for step in range(self.option.max_step_length):
                 actions_id = train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
@@ -112,8 +110,8 @@ class Trainer():
                 loss, new_state, logits, action_id, next_entities, chosen_relation= \
                     self.agent.step(prev_state, prev_relation, current_entities, actions_id, queries)
 
-                sequences = torch.cat((sequences, chosen_relation.reshape((sequences.shape[0], -1))), 1)
-                sequences = torch.cat((sequences, next_entities.reshape((sequences.shape[0], -1))), 1)
+                sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
+                sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
 
                 all_loss.append(loss)
                 all_logits.append(logits)
@@ -121,10 +119,10 @@ class Trainer():
                 prev_relation = chosen_relation
                 current_entities = next_entities
                 prev_state = new_state
-
+                        
             # todo: introduce options for reward selection
             #rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
-            top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, model)
+            top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences)
             rewards = torch.from_numpy(rewards_np)
             if self.option.use_cuda:
                 rewards = rewards.cuda()
@@ -142,30 +140,29 @@ class Trainer():
                      .format(batch_counter, rewards.mean(), num_ep_correct, avg_ep_correct, loss.mean(), reinforce_loss.mean()))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
-
+            
             self.baseline.update(torch.mean(cum_discounted_reward))
             self.agent.zero_grad()
             reinforce_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
             self.optimizer.step()
 
+
     def test(self):
         with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "w", encoding='UTF-8') as f:
             f.write("Begin test\n")
         with torch.no_grad():
-            self.agent.cpu()
+            if self.option.use_cuda:
+                self.agent.cpu()
+                self.agent.path_scoring_model.cuda()
+                torch.cuda.empty_cache() 
+                #self.option.use_cuda = False
 
             test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_test_graph_data())
             test_data = self.data_loader.get_test_data()
             test_graph.update_all_correct(test_data)
             test_graph.update_all_correct(self.data_loader.get_valid_data())
             environment = Environment(self.option, test_graph, test_data, "test")
-
-            model = BertForMaskedLM.from_pretrained(self.option.bert_path)
-            if self.option.use_cuda:
-                model.to("cuda")
-                self.option.use_cuda = False
-            model.eval()
 
             total_examples = len(test_data)
             all_final_reward_1 = 0
@@ -187,12 +184,7 @@ class Trainer():
                 prev_relation = queries
                 current_entities = start_entities
                 log_current_prob = torch.zeros(start_entities.shape[0])
-                if self.option.use_cuda:
-                    prev_relation = prev_relation.cuda()
-                    prev_state[0] = prev_state[0].cuda()
-                    prev_state[1] = prev_state[1].cuda()
-                    log_current_prob = log_current_prob.cuda()
-
+                
                 for step in range(self.option.max_step_length):
                     if True: # step == 0:
                         actions_id = test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
@@ -227,7 +219,8 @@ class Trainer():
                 # todo: flexible reward
                 #rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
                 #rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
-                top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, model)
+                
+                top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, test=True)
 
                 # todo: unify output shape of beam search
                 # if self.option.use_cuda:
@@ -310,6 +303,7 @@ class Trainer():
         path = os.path.join(self.option.this_expsdir, "model.pkt")
         # if not os.path.exists(dir_path):
         #     os.makedirs(dir_path)
+        self.agent.cpu()
         torch.save(self.agent.state_dict(), path)
 
     def load_model(self):
@@ -318,5 +312,5 @@ class Trainer():
         else:
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
-        #saved_state = torch.load(path, map_location=lambda storage, loc: 'cpu')
         self.agent.load_state_dict(torch.load(path))
+        

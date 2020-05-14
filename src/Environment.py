@@ -40,14 +40,15 @@ class Environment():
 
     def yield_next_batch_test(self):
         test_data_count = self.data_array.shape[0]
+        #test_data_count = self.option.test_batch_size
         current_idx = 0
-        bar = tqdm(total=test_data_count // self.option.batch_size)
+        bar = tqdm(total=test_data_count // self.option.test_batch_size)
         while True:
             bar.update()
             if current_idx == test_data_count:
                 return
-            if test_data_count - current_idx > self.option.batch_size:
-                batch_idx = np.arange(current_idx, current_idx + self.option.batch_size)
+            if test_data_count - current_idx > self.option.test_batch_size:
+                batch_idx = np.arange(current_idx, current_idx + self.option.test_batch_size)
                 current_idx += self.option.batch_size
             else:
                 batch_idx = np.arange(current_idx, test_data_count)

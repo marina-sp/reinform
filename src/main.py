@@ -53,6 +53,7 @@ def main():
     parser.add_argument('--load_model', default='', type=str)
     parser.add_argument('--learning_rate', default=0.001, type=float)
     parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--test_batch_size', default=1024, type=int)
     parser.add_argument('--decay_weight', default=0.02, type=float)
     parser.add_argument('--decay_batch', default=200, type=int)
     parser.add_argument('--decay_rate', default=0.9, type=float)
@@ -64,10 +65,15 @@ def main():
     # Randomization control
     parser.add_argument('--random_seed', default=1, type=int)
 
+    # Modi
+    parser.add_argument('--do_test', action='store_true')
 
     d = vars(parser.parse_args())
     option = Option(d)
     
+    if option.load_model:
+        option.do_test = True
+
     if option.exp_name is None:
         option.tag = time.strftime("%y-%m-%d-%H-%M")
     else:
@@ -101,8 +107,9 @@ def main():
     if not option.load_model:
         trainer.train()
         trainer.save_model()
-    trainer.load_model()
-    trainer.test()
+    if option.do_test:
+        trainer.load_model()
+        trainer.test()
 
 if __name__ == "__main__":
     #torch.set_printoptions(threshold=100000)

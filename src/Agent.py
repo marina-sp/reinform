@@ -5,6 +5,7 @@ import logging as log
 from torch.distributions.categorical import Categorical
 from collections import defaultdict
 import copy
+from transformers import BertForMaskedLM
 
 class Policy_step(nn.Module):
     def __init__(self, option):
@@ -48,13 +49,16 @@ class Agent(nn.Module):
         self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
 
+        # todo: load optionally
+        self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
+        self.path_scoring_model.eval()
+
         # control random state
         if self.option.use_cuda:
             self.generator = torch.cuda.manual_seed(self.option.random_seed)
             torch.manual_seed(self.option.random_seed)
         else:
             self.generator = torch.manual_seed(self.option.random_seed)
-            torch.cuda.manual_seed(self.option.random_seed)
 
         torch.nn.init.xavier_uniform_(self.relation_embedding.weight.data)
 
@@ -181,7 +185,7 @@ class Agent(nn.Module):
         reward = torch.where(reward, positive_reward, negative_reward)
         return reward
 
-    def get_context_reward(self, sequences, model, metric=1):
+    def get_context_reward(self, sequences, metric=1, test=False):
 
         inputs = copy.deepcopy(sequences)
         inputs[:,0] = self.data_loader.kg.mask_token_id
@@ -196,10 +200,11 @@ class Agent(nn.Module):
         if self.option.use_cuda:
             inputs = inputs.cuda()
             labels = labels.cuda()
-        outputs = model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
-        prediction_scores = outputs[1]
-        prediction_scores_prob = torch.nn.Softmax(dim=-1)(prediction_scores)
-        ranked_prediction_scores = torch.argsort(prediction_scores, dim=-1)
+        _, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
+        prediction_scores = output#.cpu()
+        prediction_scores_prob = prediction_scores.softmax(dim=-1)
+        if test:
+            ranked_prediction_scores = torch.argsort(prediction_scores, dim=-1)
         non_zero_idx = (labels != -1).nonzero()
         rewards = []
         pred_prob = []
@@ -208,17 +213,18 @@ class Agent(nn.Module):
             id_1 = id[0]
             id_2 = id[1]
             id_3 = labels[id_1][id_2]
-            ranks = np.flip(ranked_prediction_scores[id_1][id_2].to("cpu").numpy(),0).copy().tolist()
-            to_filter = self.data_loader.kg.tr_h[(inputs[id_1.item()][3].item(),inputs[id_1.item()][2].item())]
-
-            ranks = [x for x in ranks if ((x not in set(to_filter) and  x < self.option.num_entity) or x == id_3.item())]
-            rank = ranks.index(id_3) + 1
-            ret_ranks.append(rank)
-            if rank <= metric:
-                rewards.append(1)
-            else:
-                rewards.append(0)
             pred_prob.append(prediction_scores_prob[id_1][id_2][id_3].item())
+            if test:
+                ranks = np.flip(ranked_prediction_scores[id_1][id_2].to("cpu").numpy(),0).copy().tolist()
+                to_filter = self.data_loader.kg.tr_h[(inputs[id_1.item()][3].item(),inputs[id_1.item()][2].item())]
+
+                ranks = [x for x in ranks if ((x not in set(to_filter) and  x < self.option.num_entity) or x == id_3.item())]
+                rank = ranks.index(id_3) + 1
+                ret_ranks.append(rank)
+                if rank <= metric:
+                    rewards.append(1)
+                else:
+                    rewards.append(0)
         return np.array(rewards), np.array(pred_prob), np.array(ret_ranks)
 
     def print_parameter(self):
