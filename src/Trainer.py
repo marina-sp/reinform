@@ -169,7 +169,7 @@ class Trainer():
             environment = Environment(self.option, test_graph, test_data, "test")
             self.agent.set_graph(test_graph)
 
-            model = BertForMaskedLM.from_pretrained("../../mastersthesis/transformers/knowledge_graphs/output_minevra_a/")
+            model = BertForMaskedLM.from_pretrained(self.option.bert_path)
             if self.option.use_cuda:
                 model.to("cuda")
             model.eval()
