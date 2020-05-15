@@ -166,17 +166,16 @@ class Trainer():
             environment = Environment(self.option, test_graph, test_data, 'test')
 
             total_examples = len(test_data) if not short else (self.option.test_batch_size * short)
-            all_final_reward_1 = 0
-            all_final_reward_3 = 0
-            all_final_reward_5 = 0
-            all_final_reward_10 = 0
-            all_final_reward_20 = 0
-            all_r_rank = 0
+
+            # introduce left / right evaluation
+            metrics = np.zeros((6,3))
+            col, num_right = 1, len(self.data_loader.data[data])
+            first_left_batch, split = num_right // self.option.test_batch_size + 1, num_right % self.option.test_batch_size
 
             # todo: add sequences for the standard Minerva
             # _variable + all correct: with rollouts; variable: original data
-            for _start_entities, _queries, _answers, start_entities, queries, answers, all_correct\
-                    in environment.get_next_batch(short):
+            for i, (_start_entities, _queries, _answers, start_entities, queries, answers, all_correct)\
+                    in enumerate(environment.get_next_batch(short)):
 
                 batch_size = len(start_entities)
                 sequences = torch.stack((_answers, _queries, _start_entities), -1).reshape(batch_size, -1, 3)
@@ -207,14 +206,6 @@ class Trainer():
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
                     prev_state = chosen_state
-
-                # 计算指标
-                final_reward_1 = 0
-                final_reward_3 = 0
-                final_reward_5 = 0
-                final_reward_10 = 0
-                final_reward_20 = 0
-                r_rank = 0
 
                 # B x TIMES
                 # todo: flexible reward
@@ -256,53 +247,58 @@ class Trainer():
                 #     r_rank += 1.0 / (pos + 1)
                 # else:
                 #     r_rank += 0  # an appropriate last rank = 1.0 / self.data_loader.num_entity, but no big difference
-                
-                for pos in ranks_np:
-                    if pos < 20:
-                        final_reward_20 += 1
-                        if pos < 10:
-                            final_reward_10 += 1
-                            if pos < 5:
-                                final_reward_5 += 1
-                                if pos < 3:
-                                    final_reward_3 += 1
-                                    if pos < 1:
-                                        final_reward_1 += 1
 
-                    r_rank += 1.0 / (pos + 1)
+                metrics[:, 2] += self.get_metrics(ranks_np)
 
-                    #log.info(("pos", (pos, find_ans, relations[line_id])))
+                if i < first_left_batch:
+                    metrics[:, 1] += self.get_metrics(ranks_np[:split])
+                elif i == first_left_batch:  ## batches with inverse relations began
+                    metrics[:, 1] += self.get_metrics(ranks_np[:split])
+                    metrics[:, 0] += self.get_metrics(ranks_np[split:])
+                else:
+                    metrics[:, 0] += self.get_metrics(ranks_np)
 
-                all_final_reward_1 += final_reward_1
-                all_final_reward_3 += final_reward_3
-                all_final_reward_5 += final_reward_5
-                all_final_reward_10 += final_reward_10
-                all_final_reward_20 += final_reward_20
-                all_r_rank += r_rank
-                
-                print(final_reward_1, final_reward_3, final_reward_5, final_reward_10, r_rank)
+            # total counts
+            metrics /= total_examples
 
-            all_final_reward_1 /= total_examples
-            all_final_reward_3 /= total_examples
-            all_final_reward_5 /= total_examples
-            all_final_reward_10 /= total_examples
-            all_final_reward_20 /= total_examples
-            all_r_rank /= total_examples
-
-            log.info(("all_final_reward_1", all_final_reward_1))
-            log.info(("all_final_reward_3", all_final_reward_3))
-            log.info(("all_final_reward_5", all_final_reward_5))
-            log.info(("all_final_reward_10", all_final_reward_10))
-            log.info(("all_final_reward_20", all_final_reward_20))
-            log.info(("all_r_rank", all_r_rank))
+            log.info(("all_final_reward_1", metrics[4]))
+            log.info(("all_final_reward_3", metrics[3]))
+            log.info(("all_final_reward_5", metrics[2]))
+            log.info(("all_final_reward_10", metrics[1]))
+            log.info(("all_final_reward_20", metrics[0]))
+            log.info(("all_r_rank", metrics[5]))
+            assert (metrics[:5, 2] == (metrics[:5, 0] + metrics[:5, 1])).all()
 
             with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
-                f.write("all_final_reward_1: " + str(all_final_reward_1) + "\n")
-                f.write("all_final_reward_3: " + str(all_final_reward_3) + "\n")
-                f.write("all_final_reward_5: " + str(all_final_reward_5) + "\n")
-                f.write("all_final_reward_10: " + str(all_final_reward_10) + "\n")
-                f.write("all_final_reward_20: " + str(all_final_reward_20) + "\n")
-                f.write("all_r_rank: " + str(all_r_rank) + "\n")
+                f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
+                f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
+                f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
+                f.write("all_final_reward_10: " + str(metrics[1]) + "\n")
+                f.write("all_final_reward_20: " + str(metrics[0]) + "\n")
+                f.write("all_r_rank: " + str(metrics[5]) + "\n")
+
+    def get_metrics(self, ranks_np):
+        metrics = np.zeros(6)
+        for pos in ranks_np:
+            if pos < 20:
+                metrics[0] += 1
+                if pos < 10:
+                    metrics[1] += 1
+                    if pos < 5:
+                        metrics[2] += 1
+                        if pos < 3:
+                            metrics[3] += 1
+                            if pos < 1:
+                                metrics[4] += 1
+
+            metrics[5] += 1.0 / (pos + 1)
+        return metrics
+
+    def decode_and_save_paths(self, paths, data):
+        pass
+        #with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
+        #    pass
+
 
     def save_model(self):
         path = os.path.join(self.option.this_expsdir, "model.pkt")
