@@ -13,11 +13,11 @@ class Environment():
         self.random_state = np.random.RandomState(self.option.random_seed)
 
 
-    def get_next_batch(self):
+    def get_next_batch(self, n=None):
         if self.mode == 'train':
             return self.yield_next_batch_train()
         else:
-            return self.yield_next_batch_test()
+            return self.yield_next_batch_test(n)
 
     def yield_next_batch_train(self):
         while True:
@@ -38,12 +38,13 @@ class Environment():
 
             yield start_entities, relations, answers, all_correct
 
-    def yield_next_batch_test(self):
+    def yield_next_batch_test(self, n):
         test_data_count = self.data_array.shape[0]
         #test_data_count = self.option.test_batch_size
         current_idx = 0
-        bar = tqdm(total=test_data_count // self.option.test_batch_size)
-        while True:
+        n_batches = (test_data_count-1) // self.option.test_batch_size + 1 if not n else n
+        bar = tqdm(total=n_batches)
+        for _ in range(n_batches):
             bar.update()
             if current_idx == test_data_count:
                 return

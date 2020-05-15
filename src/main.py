@@ -113,8 +113,8 @@ def main():
         trainer.test(data='test')
     else:
         trainer.load_model()
-        trainer.test(data='train', short=True)
-        trainer.test(data='valid', short=True)
+        trainer.test(data='train', short=5)
+        trainer.test(data='valid', short=5)
 
 if __name__ == "__main__":
     #torch.set_printoptions(threshold=100000)

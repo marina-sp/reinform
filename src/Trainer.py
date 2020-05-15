@@ -165,7 +165,7 @@ class Trainer():
 
             environment = Environment(self.option, test_graph, test_data, 'test')
 
-            total_examples = len(test_data) if not short else self.option.test_batch_size
+            total_examples = len(test_data) if not short else (self.option.test_batch_size * short)
             all_final_reward_1 = 0
             all_final_reward_3 = 0
             all_final_reward_5 = 0
@@ -176,7 +176,7 @@ class Trainer():
             # todo: add sequences for the standard Minerva
             # _variable + all correct: with rollouts; variable: original data
             for _start_entities, _queries, _answers, start_entities, queries, answers, all_correct\
-                    in environment.get_next_batch():
+                    in environment.get_next_batch(short):
 
                 batch_size = len(start_entities)
                 sequences = torch.stack((_answers, _queries, _start_entities), -1).reshape(batch_size, -1, 3)
@@ -223,7 +223,8 @@ class Trainer():
                 
                 top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(
                     sequences.squeeze(1), all_correct[::self.option.test_times], test=True)
-
+                
+                #assert sequences.shape[0] == batch_size == len(all_correct[::self.option.test_times])
                 # todo: unify output shape of beam search
                 # if self.option.use_cuda:
                 #     current_entities = current_entities.cpu()
@@ -255,7 +256,7 @@ class Trainer():
                 #     r_rank += 1.0 / (pos + 1)
                 # else:
                 #     r_rank += 0  # an appropriate last rank = 1.0 / self.data_loader.num_entity, but no big difference
-
+                
                 for pos in ranks_np:
                     if pos < 20:
                         final_reward_20 += 1
@@ -278,9 +279,8 @@ class Trainer():
                 all_final_reward_10 += final_reward_10
                 all_final_reward_20 += final_reward_20
                 all_r_rank += r_rank
-
-                if short:
-                    break
+                
+                print(final_reward_1, final_reward_3, final_reward_5, final_reward_10, r_rank)
 
             all_final_reward_1 /= total_examples
             all_final_reward_3 /= total_examples
