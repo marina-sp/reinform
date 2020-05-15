@@ -222,11 +222,12 @@ class Agent(nn.Module):
         prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
+        rewards_prob = rewards_prob == prediction_prob.max(axis=-1)
 
         if not test:
             return None, rewards_prob, None
 
-        rewards_rank = np.empty_like(labels).astype(np.int)
+        rewards_rank = np.empty_like(labels).astype(np.float)
         ranks = np.empty_like(labels).astype(np.int)
 
         ranked_token_ids = torch.argsort(prediction_scores, descending=True, dim=-1).numpy()
