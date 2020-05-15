@@ -43,9 +43,9 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         self.option = option
         self.data_loader = data_loader
-        # self.relation_embedding = nn.Embedding(self.option.num_relation, self.option.relation_embed_size)
-        self.relation_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
-                                               self.option.relation_embed_size)
+        # use joint id space from Transformer
+        self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
+                                           self.option.relation_embed_size)
         self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
 
@@ -60,17 +60,17 @@ class Agent(nn.Module):
         else:
             self.generator = torch.manual_seed(self.option.random_seed)
 
-        torch.nn.init.xavier_uniform_(self.relation_embedding.weight.data)
+        torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
 
-        if self.option.use_entity_embed:
-            self.entity_embedding = nn.Embedding(self.option.num_entity, self.option.entity_embed_size)
+        #if self.option.use_entity_embed:
+        #    self.entity_embedding = nn.Embedding(self.option.num_entity, self.option.entity_embed_size)
 
     def action_encoder(self, rel_ids, ent_ids):
         if self.option.use_entity_embed:
-            parts = self.relation_embedding(rel_ids), self.entity_embedding(ent_ids)
+            parts = self.item_embedding(rel_ids), self.item_embedding(ent_ids)
             return torch.cat(parts, dim=-1)
         else:
-            return self.relation_embedding(rel_ids)
+            return self.item_embedding(rel_ids)
 
     def _step(self, prev_state, prev_relation, current_entity, actions_id, queries):
         prev_action_embedding = self.action_encoder(prev_relation, current_entity)
@@ -83,9 +83,9 @@ class Agent(nn.Module):
         action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
 
         current_state = output.squeeze()
-        queries_embedding = self.relation_embedding(queries)
+        queries_embedding = self.item_embedding(queries)
         if self.option.use_entity_embed:
-            entity_embedding = self.entity_embedding(current_entity)
+            entity_embedding = self.item_embedding(current_entity)
             state_query = torch.cat([current_state, queries_embedding, entity_embedding], -1)
         else:
             state_query = torch.cat([current_state, queries_embedding], -1)

@@ -52,8 +52,8 @@ def main():
     # Learning configuration
     parser.add_argument('--load_model', default='', type=str)
     parser.add_argument('--learning_rate', default=0.001, type=float)
-    parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--test_batch_size', default=1024, type=int)
+    parser.add_argument('--batch_size', default=2, type=int)
+    parser.add_argument('--test_batch_size', default=2, type=int)
     parser.add_argument('--decay_weight', default=0.02, type=float)
     parser.add_argument('--decay_batch', default=200, type=int)
     parser.add_argument('--decay_rate', default=0.9, type=float)
@@ -93,7 +93,7 @@ def main():
     if option.use_entity_embed is False:
         option.action_embed_size = option.relation_embed_size
     else:
-        option.action_embed_size = option.relation_embed_size + option.entity_embed_size
+        option.action_embed_size = option.relation_embed_size * 2 ## todo: allow different sizes via separate vocab
 
     option.save()
     print(option.__dict__)
