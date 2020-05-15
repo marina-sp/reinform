@@ -234,10 +234,10 @@ class Agent(nn.Module):
         for i, label in enumerate(labels.tolist()):
             ranked = ranked_token_ids[i].tolist()
             ranked = [x for x in ranked if ((x not in all_correct[i] and x < self.option.num_entity) or x == label)]
-            rank = ranked.index(label) + 1
+            rank = ranked.index(label)
 
             ranks[i] = rank
-            if rank <= metric:
+            if rank < metric:
                 rewards_rank[i] = 1
             else:
                 rewards_rank[i] = 0
