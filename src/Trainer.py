@@ -63,8 +63,8 @@ class Trainer():
         if self.option.use_cuda: 
             self.agent.cuda()
 
-        train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_train_graph_data())
-        train_data = self.data_loader.get_train_data()
+        train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
+        train_data = self.data_loader.get_data("train")
         environment = Environment(self.option, train_graph, train_data, "train")
 
         batch_counter = 0
@@ -148,9 +148,9 @@ class Trainer():
             self.optimizer.step()
 
 
-    def test(self):
+    def test(self, data='valid', short=False):
         with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "w", encoding='UTF-8') as f:
-            f.write("Begin test\n")
+            f.write("Begin test on {} data\n".format(data))
         with torch.no_grad():
             if self.option.use_cuda:
                 self.agent.cpu()
@@ -158,13 +158,14 @@ class Trainer():
                 torch.cuda.empty_cache() 
                 #self.option.use_cuda = False
 
-            test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_test_graph_data())
-            test_data = self.data_loader.get_test_data()
-            test_graph.update_all_correct(test_data)
-            test_graph.update_all_correct(self.data_loader.get_valid_data())
-            environment = Environment(self.option, test_graph, test_data, "test")
+            test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
+            test_data = self.data_loader.get_data(data)
+            test_graph.update_all_correct(self.data_loader.get_data('valid'))
+            test_graph.update_all_correct(self.data_loader.get_data('test'))
 
-            total_examples = len(test_data)
+            environment = Environment(self.option, test_graph, test_data, 'test')
+
+            total_examples = len(test_data) if not short else self.option.test_batch_size
             all_final_reward_1 = 0
             all_final_reward_3 = 0
             all_final_reward_5 = 0
@@ -277,6 +278,9 @@ class Trainer():
                 all_final_reward_10 += final_reward_10
                 all_final_reward_20 += final_reward_20
                 all_r_rank += r_rank
+
+                if short:
+                    break
 
             all_final_reward_1 /= total_examples
             all_final_reward_3 /= total_examples

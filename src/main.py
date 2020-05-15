@@ -109,7 +109,12 @@ def main():
         trainer.save_model()
     if option.do_test:
         trainer.load_model()
-        trainer.test()
+        trainer.test(data='valid')
+        trainer.test(data='test')
+    else:
+        trainer.load_model()
+        trainer.test(data='train', short=True)
+        trainer.test(data='valid', short=True)
 
 if __name__ == "__main__":
     #torch.set_printoptions(threshold=100000)
