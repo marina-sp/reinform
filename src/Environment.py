@@ -49,7 +49,7 @@ class Environment():
                 return
             if test_data_count - current_idx > self.option.test_batch_size:
                 batch_idx = np.arange(current_idx, current_idx + self.option.test_batch_size)
-                current_idx += self.option.batch_size
+                current_idx += self.option.test_batch_size
             else:
                 batch_idx = np.arange(current_idx, test_data_count)
                 current_idx = test_data_count
