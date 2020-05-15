@@ -123,7 +123,7 @@ class Trainer():
             # todo: introduce options for reward selection
             #rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
             _, rewards_np, _ = self.agent.get_context_reward(sequences, all_correct)
-            rewards = torch.from_numpy(rewards_np)
+            rewards = torch.from_numpy(rewards_np * 1.)
             if self.option.use_cuda:
                 rewards = rewards.cuda()
 
