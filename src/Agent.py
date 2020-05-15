@@ -219,7 +219,7 @@ class Agent(nn.Module):
         _, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
         #output = torch.randn(inputs.shape[0], 9, len(self.data_loader.kg.vocab))
         prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].cpu().numpy()
-        prediction_prob = prediction_scores.softmax(dim=-1).numpy()
+        prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
 
