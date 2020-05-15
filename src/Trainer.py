@@ -122,7 +122,7 @@ class Trainer():
                         
             # todo: introduce options for reward selection
             #rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
-            top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(sequences, all_correct)
+            _, rewards_np, _ = self.agent.get_context_reward(sequences, all_correct)
             rewards = torch.from_numpy(rewards_np)
             if self.option.use_cuda:
                 rewards = rewards.cuda()
@@ -131,7 +131,7 @@ class Trainer():
             reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
 
             reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
-            reward_reshape = np.sum(reward_reshape, axis=1)  # [orig_batch]
+            reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
             reward_reshape = (reward_reshape > 0)
             num_ep_correct = np.sum(reward_reshape)
             avg_ep_correct = num_ep_correct / self.option.batch_size
@@ -172,12 +172,13 @@ class Trainer():
             all_final_reward_20 = 0
             all_r_rank = 0
 
+            # todo: add sequences for the standard Minerva
             # _variable + all correct: with rollouts; variable: original data
             for _start_entities, _queries, _answers, start_entities, queries, answers, all_correct\
                     in environment.get_next_batch():
-                sequences = torch.stack((answers,queries,start_entities), -1)
 
                 batch_size = len(start_entities)
+                sequences = torch.stack((_answers, _queries, _start_entities), -1).reshape(batch_size, -1, 3)
                 prev_state = [torch.zeros(start_entities.shape[0], self.option.state_embed_size),
                               torch.zeros(start_entities.shape[0], self.option.state_embed_size)]
                 # prev_relation = self.agent.get_dummy_start_relation(start_entities.shape[0])
@@ -186,22 +187,21 @@ class Trainer():
                 log_current_prob = torch.zeros(start_entities.shape[0])
                 
                 for step in range(self.option.max_step_length):
-                    if True: # step == 0:
+                    if step == 0:
                         actions_id = test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
                                                         step)
-                        chosen_state, chosen_relation, chosen_entities, log_current_prob = \
+                        chosen_state, chosen_relation, chosen_entities, log_current_prob, sequences = \
                             self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
-                                                 log_current_prob, queries, batch_size)
+                                                 log_current_prob, queries, batch_size, sequences,
+                                                 step == self.option.max_step_length - 1)
 
-                    # else:
-                    #     actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
-                    #                                     all_correct, step)
-                    #     chosen_state, chosen_relation, chosen_entities, log_current_prob = \
-                    #         self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
-                    #                              log_current_prob, _queries, batch_size)
-
-                    sequences = torch.cat((sequences, chosen_relation.reshape((sequences.shape[0], -1))), 1)
-                    sequences = torch.cat((sequences, chosen_entities.reshape((sequences.shape[0], -1))), 1)
+                    else:
+                        actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
+                                                        all_correct, step)
+                        chosen_state, chosen_relation, chosen_entities, log_current_prob, sequences = \
+                            self.agent.test_step(prev_state, prev_relation, current_entities, actions_id,
+                                                 log_current_prob, _queries, batch_size, sequences,
+                                                 step == self.option.max_step_length - 1)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
@@ -221,7 +221,7 @@ class Trainer():
                 #rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
                 
                 top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(
-                    sequences, all_correct[::self.option.test_times], test=True)
+                    sequences.squeeze(1), all_correct[::self.option.test_times], test=True)
 
                 # todo: unify output shape of beam search
                 # if self.option.use_cuda:

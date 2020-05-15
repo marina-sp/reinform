@@ -128,17 +128,20 @@ class Agent(nn.Module):
 
         return loss, new_state, logits, action_id, next_entities, chosen_relation
 
-    def test_step(self, prev_state, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size):
+    def test_step(self, prev_state, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
+                  sequences, last_step):
 
         log_action_prob, out_relations_id, out_entities_id, new_state = self._step(
             prev_state, prev_relation, current_entity, actions_id, queries)
 
-        chosen_state, chosen_relation, chosen_entities, log_current_prob = self.test_search\
-            (new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size)
+        chosen_state, chosen_relation, chosen_entities, log_current_prob, sequences = self.test_search\
+            (new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size,
+             sequences, last_step)
 
-        return chosen_state, chosen_relation, chosen_entities, log_current_prob
+        return chosen_state, chosen_relation, chosen_entities, log_current_prob, sequences
 
-    def test_search(self, new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size):
+    def test_search(self, new_state, log_current_prob, log_action_prob, out_relations_id, out_entities_id,
+                    batch_size, sequences, last_step):
         ## tf: trainer beam search ##
 
         ## CAREFUL: t=torch.arange(6); t.view(3,2) does not equal t.view(2,3).t()
@@ -146,11 +149,15 @@ class Agent(nn.Module):
 
         # shape: BATCH*TIMES --> BATCH x TIMES*MAX_OUT
         # linear order: BATCH(TIMES(MAX_OUT)))
+
+        # todo: adjust for the normal search at the last step
         log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
-        # top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
-        top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
+        if not last_step:
+            top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
+        else:
+            top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
 
         # copy
         new_state_0 = new_state[0].unsqueeze(1).repeat(1, self.option.max_out, 1)
@@ -163,17 +170,26 @@ class Agent(nn.Module):
         out_relations_id = out_relations_id.view(batch_size, -1)
         out_entities_id = out_entities_id.view(batch_size, -1)
 
+        # select action according to beam search
         chosen_relation = torch.gather(out_relations_id, dim=1, index=top_k_action_id).view(-1)
         chosen_entities = torch.gather(out_entities_id, dim=1, index=top_k_action_id).view(-1)
         log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
         # assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
+        # select history according to beam search
         top_k_action_id_state = top_k_action_id.unsqueeze(2).repeat(1, 1, self.option.state_embed_size)
         chosen_state = \
             (torch.gather(new_state_0, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size),
              torch.gather(new_state_1, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size))
 
-        return chosen_state, chosen_relation, chosen_entities, log_current_prob
+        top_k_action_id_seq = top_k_action_id.unsqueeze(2).repeat(1, 1, sequences.shape[-1]) // self.option.max_out
+        sequences = torch.gather(sequences, dim=1, index=top_k_action_id_seq).view(-1, sequences.shape[-1])
+
+        # append new elements to the sequences
+        sequences = torch.cat((sequences, chosen_relation.view(-1, 1), chosen_entities.view(-1, 1)), dim=-1)
+        sequences = sequences.view(batch_size, -1, sequences.shape[-1])
+
+        return chosen_state, chosen_relation, chosen_entities, log_current_prob, sequences
 
     def get_dummy_start_relation(self, batch_size):
         dummy_start_item = self.data_loader.kg.pad_token_id
