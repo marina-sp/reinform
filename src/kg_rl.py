@@ -20,6 +20,8 @@ class CustomKG(KnowledgeGraph):
         self.reserved_vocab = 5
         super().__init__(dataset)
 
+        self.rel2inv = {}
+
     def prepare_data(self):
         if self.dataset.cache_metadata_path.exists():
             os.remove(self.dataset.cache_metadata_path)
@@ -51,12 +53,14 @@ class CustomKG(KnowledgeGraph):
 
         # Add reversed triples
         for data in ['train', 'valid', 'test']:
+            self.triplets[data] = self.triplets[data][:100]
             temp_len = len(self.triplets[data])
             temp_data = []
             for triple in self.triplets[data]:
                 rev_relation_id_1 = self.relation2idx["_" + self.idx2relation[triple.r]]
                 rev_relation_id_2 = triple.r + num_existing_relations
                 assert rev_relation_id_1 == rev_relation_id_2
+                self.rel2inv[triple.r], self.rel2inv[rev_relation_id_1] = rev_relation_id_1, triple.r
                 temp_triple = Triple("", "", "")
                 temp_triple.set_ids(triple.t, rev_relation_id_1, triple.h)
 

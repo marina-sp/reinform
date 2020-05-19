@@ -29,9 +29,10 @@ class Environment():
             start_entities = batch[:, 2]
             relations = batch[:, 1]
             answers = batch[:, 0]
+            inv_relations = batch[:,3]
 
             start_entities_np = start_entities.numpy()
-            relations_np = relations.numpy()
+            relations_np = inv_relations.numpy()
             all_correct = self.graph.get_all_correct(start_entities_np, relations_np)
             start_entities, relations, answers, all_correct = self.data_times(start_entities, relations, answers,
                                                                               all_correct, "train")
@@ -60,12 +61,13 @@ class Environment():
             # relations = batch[:, 1]
             # answers = batch[:, 2]
 
-            start_entities = batch[:,2]
+            start_entities = batch[:, 2]
             relations = batch[:, 1]
             answers = batch[:, 0]
+            inv_relations = batch[:,3]
 
             start_entities_np = start_entities.numpy()
-            relations_np = relations.numpy()
+            relations_np = inv_relations.numpy()
 
             all_correct = self.graph.get_all_correct(start_entities_np, relations_np)
             _start_entities, _relations, _answers, all_correct = self.data_times(start_entities, relations, answers,

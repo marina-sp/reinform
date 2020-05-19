@@ -74,10 +74,10 @@ class Data_loader():
         ## inversed triplets in kg are added last
         split = len(self.kg.triplets[data]) // 2
         assert split * 2 == len(self.kg.triplets[data])
-        return (
-            [[t.h, t.r, t.t] for t in self.kg.triplets[data][:split]],
-            [[t.h, t.r, t.t] for t in self.kg.triplets[data][split:]]
-        )
+        hrt = [[t.h, t.r, t.t, self.kg.rel2inv[t.r]] for t in self.kg.triplets[data][:split]]
+        trh = [[t.h, t.r, t.t, self.kg.rel2inv[t.r]] for t in self.kg.triplets[data][split:]]
+        assert np.array(hrt)[:,1].max() < np.array(trh)[:,1].min()  # indices of inverse relations must be higher
+        return (hrt, trh)
 
     def get_data(self, data):
         if data == 'train':
