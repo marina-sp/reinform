@@ -16,7 +16,7 @@ class Knowledge_graph():
     # 根据原始数据构建知识图谱，out_array存储每个节点向外的出口路径数组
     def construct_graph(self):
         all_out_dict = defaultdict(list)
-        for head, relation, tail in self.data:
+        for head, relation, tail, _ in self.data:
             all_out_dict[head].append((relation, tail))
 
         all_correct = defaultdict(set)
@@ -50,10 +50,18 @@ class Knowledge_graph():
             if current_entities[i] == start_entities[i]:
                 relations = ret[i, :, 0]
                 entities = ret[i, :, 1]
-                mask = query_relations[i].eq(relations) & answers[i].eq(entities)
-                #mask = queries[i].eq(relations)
+                # note: different from the orig due to front masking (mask inverse triple)
+                mask = (self.data_loader.kg.rel2inv[query_relations[i].item()] == relations) & answers[i].eq(entities)
                 ret[i, :, 0][mask] = self.data_loader.kg.pad_token_id
                 ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
+            elif current_entities[i] == answers[i]:
+                relations = ret[i, :, 0]
+                entities = ret[i, :, 1]
+                # note: different from the orig due to front masking (mask orig triple)
+                mask = (query_relations[i] == relations) & start_entities[i].eq(entities)
+                ret[i, :, 0][mask] = self.data_loader.kg.pad_token_id
+                ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
+
 
             # if step == self.option.max_step_length - 1:
             #     relations = ret[i, :, 0]
@@ -73,5 +81,5 @@ class Knowledge_graph():
         return all_correct
 
     def update_all_correct(self, data):
-        for head, relation, tail in data:
+        for head, relation, tail, _ in data:
             self.all_correct[(head, relation)].add(tail)
