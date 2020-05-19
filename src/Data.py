@@ -80,7 +80,10 @@ class Data_loader():
         )
 
     def get_data(self, data):
-        out = self.data[data] + self.data[f'inv_{data}'] if self.include_reverse else self.data[data]
+        if data == 'train':
+            out = self.data[data] + self.data[f'inv_{data}'] if self.include_reverse else self.data[data]
+        else:
+            out = self.data[data] + self.data[f'inv_{data}']  
         with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
             f.write(f"{data} data contains {len(out)} triples\n")
         return np.array(out, dtype=np.int64)
