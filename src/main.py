@@ -17,31 +17,30 @@ class Option:
             for key, value in sorted(self.__dict__.items(), key = lambda x: x[0]):
                 f.write("{}, {}\n".format(key, str(value)))
 
-def main():
-    log.basicConfig(level=log.INFO)
-
-    parser = argparse.ArgumentParser(description = "Experiment setup")
+def read_options():
+    parser = argparse.ArgumentParser(description="Experiment setup")
 
     # Log configuration
     parser.add_argument('--exps_dir', default="../exps/", type=str)
     parser.add_argument('--exp_name', default="demo", type=str)
-    
+
     # Dataset
     parser.add_argument('--datadir', default="../datasets", type=str)
     parser.add_argument('--dataset', default="WN18RR", type=str)
-    parser.add_argument('--use_inverse', default=False, type=bool)
+    parser.add_argument('--use_inverse', default=True, type=bool)
 
     # Agent configuration
-    parser.add_argument('--state_embed_size', default=100, type=int)
-    parser.add_argument('--relation_embed_size', default=100, type=int)
-    parser.add_argument('--mlp_hidden_size', default=200, type=int)
-    parser.add_argument('--use_entity_embed', default=False, type=bool)
-    parser.add_argument('--entity_embed_size', default=50, type=int)
+    parser.add_argument('--random-agent', default=True, type=bool)
+    parser.add_argument('--state_embed_size', default=2, type=int)
+    parser.add_argument('--relation_embed_size', default=2, type=int)
+    parser.add_argument('--mlp_hidden_size', default=4, type=int)
+    parser.add_argument('--use_entity_embed', default=True, type=bool)
+    # parser.add_argument('--entity_embed_size', default=5, type=int)
     parser.add_argument("--grad_clip_norm", default=5, type=int)
 
     parser.add_argument('--train_times', default=20, type=int)
-    parser.add_argument('--test_times', default=100, type=int)
-    parser.add_argument("--train_batch", default=1000, type=int)
+    parser.add_argument('--test_times', default=5, type=int)
+    parser.add_argument("--train_batch", default=0, type=int)
     parser.add_argument('--max_out', default=200, type=int)
     parser.add_argument('--max_step_length', default=3, type=int)
 
@@ -53,7 +52,7 @@ def main():
     parser.add_argument('--load_model', default='', type=str)
     parser.add_argument('--learning_rate', default=0.001, type=float)
     parser.add_argument('--batch_size', default=2, type=int)
-    parser.add_argument('--test_batch_size', default=2, type=int)
+    parser.add_argument('--test_batch_size', default=10, type=int)
     parser.add_argument('--decay_weight', default=0.02, type=float)
     parser.add_argument('--decay_batch', default=200, type=int)
     parser.add_argument('--decay_rate', default=0.9, type=float)
@@ -66,11 +65,11 @@ def main():
     parser.add_argument('--random_seed', default=1, type=int)
 
     # Modi
-    parser.add_argument('--do_test', action='store_true')
+    parser.add_argument('--do_test', default=True, type=bool)
 
     d = vars(parser.parse_args())
     option = Option(d)
-    
+
     if option.load_model:
         option.do_test = True
 
@@ -93,10 +92,14 @@ def main():
     if option.use_entity_embed is False:
         option.action_embed_size = option.relation_embed_size
     else:
-        option.action_embed_size = option.relation_embed_size * 2 ## todo: allow different sizes via separate vocab
+        option.action_embed_size = option.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
 
     option.save()
     print(option.__dict__)
+    return option
+
+def main(option):
+    log.basicConfig(level=log.INFO)
 
     data_loader = Data_loader(option)
     option.num_entity = data_loader.num_entity
@@ -118,7 +121,8 @@ def main():
 
 if __name__ == "__main__":
     #torch.set_printoptions(threshold=100000)
-    main()
+    option = read_options()
+    main(option)
 
 
 
