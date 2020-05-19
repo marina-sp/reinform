@@ -129,6 +129,9 @@ class Trainer():
 
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
             reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
+            
+            if np.isnan(reinforce_loss.detach().cpu().numpy()):
+                raise ArithmeticError("Error in computing loss")
 
             reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
             reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
@@ -169,9 +172,9 @@ class Trainer():
 
             # introduce left / right evaluation
             metrics = np.zeros((6,3))
-            col, num_right = 1, len(self.data_loader.data[data])
-            first_left_batch, split = num_right // self.option.test_batch_size + 1, num_right % self.option.test_batch_size
-
+            num_right = len(self.data_loader.data[data])
+            first_left_batch, split = num_right // self.option.test_batch_size, num_right % self.option.test_batch_size
+            
             # todo: add sequences for the standard Minerva
             # _variable + all correct: with rollouts; variable: original data
             for i, (_start_entities, _queries, _answers, start_entities, queries, answers, all_correct)\
@@ -251,24 +254,26 @@ class Trainer():
                 metrics[:, 2] += self.get_metrics(ranks_np)
 
                 if i < first_left_batch:
-                    metrics[:, 1] += self.get_metrics(ranks_np[:split])
+                    metrics[:, 1] += self.get_metrics(ranks_np)
                 elif i == first_left_batch:  ## batches with inverse relations began
                     metrics[:, 1] += self.get_metrics(ranks_np[:split])
                     metrics[:, 0] += self.get_metrics(ranks_np[split:])
                 else:
                     metrics[:, 0] += self.get_metrics(ranks_np)
 
-            # total counts
-            metrics /= total_examples
+            assert (metrics[:5, 2] == (metrics[:5, 0] + metrics[:5, 1])).all()
 
+            # total counts
+            metrics[:, 2:] /= total_examples
+            metrics[:, :2] /= num_right
+            
             log.info(("all_final_reward_1", metrics[4]))
             log.info(("all_final_reward_3", metrics[3]))
             log.info(("all_final_reward_5", metrics[2]))
             log.info(("all_final_reward_10", metrics[1]))
             log.info(("all_final_reward_20", metrics[0]))
             log.info(("all_r_rank", metrics[5]))
-            assert (metrics[:5, 2] == (metrics[:5, 0] + metrics[:5, 1])).all()
-
+            
             with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
                 f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
