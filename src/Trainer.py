@@ -3,7 +3,7 @@ import os, time
 import logging as log
 from Graph import Knowledge_graph
 from Environment import Environment
-from Baseline import ReactiveBaseline
+from Baseline import ReactiveBaseline, RandomBaseline
 import numpy as np
 
 
@@ -16,6 +16,7 @@ class Trainer():
         self.positive_reward = torch.tensor(1.)
         self.negative_reward = torch.tensor(0.)
         self.baseline = ReactiveBaseline(option, self.option.Lambda)
+        self.baseline = RandomBaseline(option, agent)
         self.decaying_beta = self.option.beta
 
         if self.option.use_cuda:
@@ -40,11 +41,11 @@ class Trainer():
         entropy_loss = - torch.mean(torch.sum(torch.mul(torch.exp(all_logits), all_logits), dim=1))  # scalar
         return entropy_loss
 
-    def calc_reinforce_loss(self, all_loss, all_logits, cum_discounted_reward):
+    def calc_reinforce_loss(self, all_loss, all_logits, final_reward):
 
         loss = torch.stack(all_loss, dim=1)  # [B, T]
-        base_value = self.baseline.get_baseline_value()
-        final_reward = cum_discounted_reward - base_value
+        #base_value = self.baseline.get_baseline_value()
+        #final_reward = cum_discounted_reward - base_value
 
         reward_mean = torch.mean(final_reward)
         reward_std = torch.std(final_reward) + 1e-6
@@ -123,8 +124,15 @@ class Trainer():
             if self.option.use_cuda:
                 rewards = rewards.cuda()
 
+            # apply baseline deduction
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
-            reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
+            base_value = self.baseline.get_baseline_value(
+                batch=(start_entities, start_entities, queries, answers, all_correct),
+                graph=train_graph)
+            if base_value.shape[0] != 0:
+                base_value = self.calc_cum_discounted_reward(base_value)
+            final_reward = cum_discounted_reward - base_value
+            reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, final_reward)
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
@@ -136,7 +144,8 @@ class Trainer():
             avg_ep_correct = num_ep_correct / self.option.batch_size
 
             log.info("{:3.0f} reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
-                     .format(batch_counter, rewards.mean(), num_ep_correct, avg_ep_correct, loss.mean(), reinforce_loss.mean()))
+                     .format(batch_counter, rewards.mean(), num_ep_correct, avg_ep_correct,
+                             torch.stack(all_loss).mean(), reinforce_loss.mean()))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
             
@@ -148,8 +157,8 @@ class Trainer():
 
 
     def test(self, data='valid', short=False):
-        with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "w", encoding='UTF-8') as f:
-            f.write("Begin test on {} data\n".format(data))
+        with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "w", encoding='UTF-8') as f:
+            f.write(f"Begin test on {data} data\n")
         with torch.no_grad():
             if self.option.use_cuda:
                 self.agent.cpu()
