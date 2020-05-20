@@ -86,6 +86,7 @@ class Agent(nn.Module):
 
         if self.option.random_agent:
             logits = torch.randn(out_relations_id.shape, requires_grad=True).log_softmax(dim=-1)  # B x n_actions
+            logits = logits.to(self.item_embedding.weight.device)
         else:
             prev_action_embedding = self.action_encoder(prev_relation, current_entity)
 
@@ -234,10 +235,12 @@ class Agent(nn.Module):
         prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
-        rewards_prob = rewards_prob == prediction_prob.max(axis=-1)
-
+        
         if not test:
-            return None, rewards_prob, None
+            # for unfiltered rank == 1 uncomment:
+            rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
+
+            return _, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
         ranks = np.empty_like(labels).astype(np.int)
