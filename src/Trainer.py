@@ -106,7 +106,7 @@ class Trainer():
                 if self.option.use_cuda:
                     actions_id = actions_id.cuda()
                 loss, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_relation, current_entities, actions_id, queries)
+                    self.agent.step(prev_relation, current_entities, actions_id, queries, self.option.random_agent)
 
                 sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
                 sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
@@ -200,7 +200,8 @@ class Trainer():
                         chosen_relation, chosen_entities, log_current_prob, sequences = \
                             self.agent.test_step(prev_relation, current_entities, actions_id,
                                                  log_current_prob, queries, batch_size, sequences,
-                                                 step == self.option.max_step_length - 1)
+                                                 step == self.option.max_step_length - 1,
+                                                 self.option.random_agent)
 
                     else:
                         actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
@@ -208,7 +209,8 @@ class Trainer():
                         chosen_relation, chosen_entities, log_current_prob, sequences = \
                             self.agent.test_step(prev_relation, current_entities, actions_id,
                                                  log_current_prob, _queries, batch_size, sequences,
-                                                 step == self.option.max_step_length - 1)
+                                                 step == self.option.max_step_length - 1,
+                                                 self.option.random_agent)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities

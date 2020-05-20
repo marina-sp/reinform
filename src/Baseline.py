@@ -37,11 +37,11 @@ class RandomBaseline():
         sequences = torch.stack((answers, queries_cpu, start_entities), -1)
         for step in range(self.option.max_step_length):
             actions_id = graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
-                                             answers, all_correct, step)
+                                       answers, all_correct, step)
             if self.option.use_cuda:
                 actions_id = actions_id.cuda()
             loss, logits, action_id, next_entities, chosen_relation = \
-                self.agent.step(prev_relation, current_entities, actions_id, queries)
+                self.agent.step(prev_relation, current_entities, actions_id, queries, True)
 
             sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
             sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)

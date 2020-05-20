@@ -78,13 +78,13 @@ class Agent(nn.Module):
         else:
             return self.item_embedding(rel_ids)
 
-    def _step(self, prev_relation, current_entity, actions_id, queries):
+    def _step(self, prev_relation, current_entity, actions_id, queries, random):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
         action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
 
-        if self.option.random_agent:
+        if random:
             logits = torch.randn(out_relations_id.shape, requires_grad=True).log_softmax(dim=-1)  # B x n_actions
         else:
             prev_action_embedding = self.action_encoder(prev_relation, current_entity)
@@ -139,10 +139,10 @@ class Agent(nn.Module):
         return loss, logits, action_id, next_entities, chosen_relation
 
     def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
-                  sequences, last_step):
+                  sequences, last_step, random):
 
         log_action_prob, out_relations_id, out_entities_id = self._step(
-            prev_relation, current_entity, actions_id, queries)
+            prev_relation, current_entity, actions_id, queries, random)
 
         chosen_relation, chosen_entities, log_current_prob, sequences = self.test_search(
             log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size,
