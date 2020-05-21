@@ -8,7 +8,7 @@ from pykg2vec.utils.kgcontroller import Triple
 
 class CustomKG(KnowledgeGraph):
 
-    def __init__(self, path_length, dataset='freebase15k_237'):
+    def __init__(self, dataset='WN18_RR'):
         self.pad_token_id = 0
         self.sep_token_id = 1
         self.mask_token_id = 2
