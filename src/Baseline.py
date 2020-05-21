@@ -28,7 +28,7 @@ class RandomBaseline():
         # prev_relation = self.agent.get_dummy_start_relation(batch_size)
         prev_relation = queries
         current_entities = start_entities
-        queries_cpu = queries.detach().clone()
+        queries_cpu = queries.detach().clone().cpu()
         if self.option.use_cuda:
             prev_relation = prev_relation.cuda()
             queries = queries.cuda()

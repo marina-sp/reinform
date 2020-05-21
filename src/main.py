@@ -69,7 +69,7 @@ def read_options():
     parser.add_argument('--random_seed', default=1, type=int)
 
     # Modi
-    parser.add_argument('--do_test', default=True, type=bool)
+    parser.add_argument('--do_test', default=False, type=bool)
 
     d = vars(parser.parse_args())
     option = Option(d)
@@ -111,7 +111,10 @@ def main(option):
     agent = Agent(option, data_loader)
     trainer = Trainer(option, agent, data_loader)
 
-    if not option.load_model:
+    if option.load_model:
+        trainer.load_model()
+        option.load_model = ''
+    if option.train_batch != 0:
         trainer.train()
         trainer.save_model()
     if option.do_test:

@@ -52,9 +52,10 @@ class Trainer():
         #base_value = self.baseline.get_baseline_value()
         #final_reward = cum_discounted_reward - base_value
 
-        reward_mean = torch.mean(final_reward)
-        reward_std = torch.std(final_reward) + 1e-6
-        final_reward = torch.div(final_reward - reward_mean, reward_std)
+        #reward_mean = torch.mean(final_reward)
+        #reward_std = torch.std(final_reward) + 1e-6
+        #final_reward = torch.div(final_reward - reward_mean, reward_std)
+        final_reward /= final_reward.max()
 
         loss = torch.mul(loss, final_reward)  # [B, T]
         entropy_loss = self.decaying_beta * self.entropy_reg_loss(all_logits)
@@ -174,7 +175,8 @@ class Trainer():
         with torch.no_grad():
             if self.option.use_cuda:
                 self.agent.cpu()
-                self.agent.path_scoring_model.cuda()
+                if "context" in [self.option.reward, self.option.metric]:
+                    self.agent.path_scoring_model.cuda()
                 torch.cuda.empty_cache() 
                 #self.option.use_cuda = False
 
@@ -304,7 +306,7 @@ class Trainer():
             log.info(("all_final_reward_20", metrics[0]))
             log.info(("all_r_rank", metrics[5]))
 
-            with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
+            with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
                 f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
                 f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
@@ -355,10 +357,11 @@ class Trainer():
         torch.save(self.agent.my_state_dict(), path)
 
     def load_model(self):
+        if self.option.random_agent:
+            return
         if self.option.load_model:
             dir_path = os.path.join(self.option.exps_dir, self.option.load_model)
         else:
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
-        self.agent.load_state_dict(torch.load(path), strict=False)
-        
+        self.agent.load_state_dict({k:v for k,v in torch.load(path).items() if k.startswith('item')}, strict=False)
