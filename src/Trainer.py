@@ -61,7 +61,8 @@ class Trainer():
 
         total_loss = torch.mean(loss) - entropy_loss  # scalar
 
-        return total_loss
+        return total_loss, final_reward
+
 
     def train(self):
         with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "w", encoding='UTF-8') as f:
@@ -143,7 +144,7 @@ class Trainer():
             if base_value.shape[0] != 0:
                 base_value = self.calc_cum_discounted_reward(base_value)
             final_reward = cum_discounted_reward - base_value
-            reinforce_loss = self.calc_reinforce_loss(all_loss, all_logits, final_reward)
+            reinforce_loss, final_reward = self.calc_reinforce_loss(all_loss, all_logits, final_reward)
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
@@ -154,9 +155,9 @@ class Trainer():
             num_ep_correct = np.sum(reward_reshape)
             avg_ep_correct = num_ep_correct / self.option.batch_size
 
-            log.info("{:3.0f} reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
-                     .format(batch_counter, rewards.mean(), num_ep_correct, avg_ep_correct,
-                             torch.stack(all_loss).mean(), reinforce_loss.item()))
+            log.info("{:3.0f} reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
+                     .format(batch_counter, rewards.mean(), final_reward.mean(), num_ep_correct, avg_ep_correct,
+                              torch.stack(all_loss).mean(), reinforce_loss.item()))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
             

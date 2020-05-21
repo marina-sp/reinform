@@ -89,6 +89,7 @@ class Agent(nn.Module):
 
         if random:
             logits = torch.randn(out_relations_id.shape, requires_grad=True).log_softmax(dim=-1)  # B x n_actions
+            logits = logits.to(self.item_embedding.weight.device)
         else:
             prev_action_embedding = self.action_encoder(prev_relation, current_entity)
 
@@ -231,8 +232,9 @@ class Agent(nn.Module):
         if self.option.use_cuda:
             inputs = inputs.cuda()
             labels = labels.cuda()
-        _, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
-        #output = torch.randn(inputs.shape[0], 9, len(self.data_loader.kg.vocab))
+        #_, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
+        #output = self.path_scoring_model(inputs.type(torch.float32)) # , masked_lm_labels=labels.type(torch.int64))
+        output = torch.randn(inputs.shape[0], 9, self.item_embedding.num_embeddings)
         prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].cpu().numpy()
         prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 
