@@ -88,8 +88,8 @@ class Agent(nn.Module):
         action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
 
         if random:
-            logits = torch.randn(out_relations_id.shape, requires_grad=True).log_softmax(dim=-1)  # B x n_actions
-            logits = logits.to(self.item_embedding.weight.device)
+            prelim_scores = torch.randn(out_relations_id.shape, requires_grad=True)  # B x n_actions
+            prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
         else:
             prev_action_embedding = self.action_encoder(prev_relation, current_entity)
 
@@ -108,12 +108,12 @@ class Agent(nn.Module):
             output = self.policy_mlp(state_query)  # B x 1 x action_emb
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
 
-            # Masking PAD actions
-            dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
-            mask = torch.eq(out_entities_id, dummy_actions_id)  # B x n_actions
-            dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
-            scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
-            logits = scores.log_softmax(dim=-1)  # B x n_actions
+        # Masking PAD actions
+        dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
+        mask = torch.eq(out_entities_id, dummy_actions_id)  # B x n_actions
+        dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
+        scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
+        logits = scores.log_softmax(dim=-1)  # B x n_actions
 
         return logits, out_relations_id, out_entities_id
 
@@ -232,14 +232,14 @@ class Agent(nn.Module):
         if self.option.use_cuda:
             inputs = inputs.cuda()
             labels = labels.cuda()
-        #_, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
+        _, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
         #output = self.path_scoring_model(inputs.type(torch.float32)) # , masked_lm_labels=labels.type(torch.int64))
-        output = torch.randn(inputs.shape[0], 9, self.item_embedding.num_embeddings)
+        #output = torch.randn(inputs.shape[0], 9, self.item_embedding.num_embeddings)
         prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].cpu().numpy()
         prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
-        rewards_prob = rewards_prob == prediction_prob.max(axis=-1)
+        #rewards_prob = rewards_prob >= np.percentile(prediction_prob, q=99.9, axis=-1)
 
         if not test:
             return None, rewards_prob, None
