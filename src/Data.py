@@ -24,6 +24,8 @@ class Data_loader():
         self.entity2num, self.num2entity = self.kg.entity2idx, self.kg.idx2entity
         self.relation2num, self.num2relation = self.kg.relation2idx, self.kg.idx2relation
         self.num2relation[self.kg.unk_token_id] = "NO_OP"
+        self.num2relation[self.kg.pad_token_id] = "PAD"
+        self.num2entity[self.kg.pad_token_id] = "PAD"
         # self._augment_reverse_relation()
         # self._add_item(self.relation2num, self.num2relation, "Equal")
         # self._add_item(self.relation2num, self.num2relation, "Pad")
