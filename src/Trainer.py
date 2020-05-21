@@ -15,8 +15,13 @@ class Trainer():
         self.optimizer = torch.optim.Adam(self.agent.parameters(), lr=self.option.learning_rate)
         self.positive_reward = torch.tensor(1.)
         self.negative_reward = torch.tensor(0.)
-        self.baseline = ReactiveBaseline(option, self.option.Lambda)
-        self.baseline = RandomBaseline(option, agent)
+
+        if option.baseline == "random" and option.reward == "context":
+            self.baseline = RandomBaseline(option, agent)
+        elif option.baseline == "react":
+            self.baseline = ReactiveBaseline(option, self.option.Lambda)
+        else:
+            raise RuntimeError("random baseline incompatible with answer search")
         self.decaying_beta = self.option.beta
 
         if self.option.use_cuda:
@@ -85,8 +90,14 @@ class Trainer():
 
             batch_size = start_entities.shape[0]
             self.agent.zero_state(batch_size)
-            # prev_relation = self.agent.get_dummy_start_relation(batch_size)
-            prev_relation = queries
+
+            if self.option.reward == "answer":
+                prev_relation = self.agent.get_dummy_start_relation(batch_size)
+                sequences = torch.empty((batch_size, 0), dtype=queries.dtype)
+            else:
+                prev_relation = queries
+                sequences = torch.stack((answers, queries, start_entities), -1)
+
             current_entities = start_entities
             queries_cpu = queries.detach().clone()
             if self.option.use_cuda:
@@ -97,8 +108,6 @@ class Trainer():
             all_loss = []
             all_logits = []
             all_action_id = []
-
-            sequences = torch.stack((answers, queries_cpu, start_entities), -1)
 
             for step in range(self.option.max_step_length):
                 actions_id = train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
@@ -118,11 +127,13 @@ class Trainer():
                 current_entities = next_entities
                         
             # todo: introduce options for reward selection
-            #rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
-            _, rewards_np, _ = self.agent.get_context_reward(sequences, all_correct)
-            rewards = torch.from_numpy(rewards_np * 1.)
-            if self.option.use_cuda:
-                rewards = rewards.cuda()
+            if self.option.reward == "answer":
+                rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
+            elif self.option.reward == "context":
+                _, rewards_np, _ = self.agent.get_context_reward(sequences, all_correct)
+                rewards = torch.from_numpy(rewards_np * 1.)
+                if self.option.use_cuda:
+                    rewards = rewards.cuda()
 
             # apply baseline deduction
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
@@ -145,7 +156,7 @@ class Trainer():
 
             log.info("{:3.0f} reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
                      .format(batch_counter, rewards.mean(), num_ep_correct, avg_ep_correct,
-                             torch.stack(all_loss).mean(), reinforce_loss.mean()))
+                             torch.stack(all_loss).mean(), reinforce_loss.item()))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
             
@@ -179,6 +190,7 @@ class Trainer():
             metrics = np.zeros((6,3))
             num_right = len(self.data_loader.data[data])
             first_left_batch, split = num_right // self.option.test_batch_size, num_right % self.option.test_batch_size
+            print(len(test_data), num_right, self.option.test_batch_size, first_left_batch, split)
 
             # todo: add sequences for the standard Minerva
             # _variable + all correct: with rollouts; variable: original data
@@ -186,10 +198,14 @@ class Trainer():
                     in enumerate(environment.get_next_batch(short)):
 
                 batch_size = len(start_entities)
-                sequences = torch.stack((_answers, _queries, _start_entities), -1).reshape(batch_size, -1, 3)
                 self.agent.zero_state(batch_size)
-                # prev_relation = self.agent.get_dummy_start_relation(start_entities.shape[0])
-                prev_relation = queries
+                if self.option.reward == "answer":
+                    prev_relation = self.agent.get_dummy_start_relation(batch_size)
+                    sequences = _start_entities.reshape(batch_size, -1, 1)
+                else:
+                    prev_relation = queries
+                    sequences = torch.stack((_answers, _queries, _start_entities), -1).reshape(batch_size, -1, 3)
+
                 current_entities = start_entities
                 log_current_prob = torch.zeros(start_entities.shape[0])
                 
@@ -197,76 +213,82 @@ class Trainer():
                     if step == 0:
                         actions_id = test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
                                                         step)
-                        chosen_relation, chosen_entities, log_current_prob, sequences = \
-                            self.agent.test_step(prev_relation, current_entities, actions_id,
-                                                 log_current_prob, queries, batch_size, sequences,
-                                                 step == self.option.max_step_length - 1,
-                                                 self.option.random_agent)
+                        chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
+                            prev_relation, current_entities, actions_id,
+                            log_current_prob, queries, batch_size, sequences,
+                            step,
+                            self.option.random_agent)
 
                     else:
                         actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
                                                         all_correct, step)
-                        chosen_relation, chosen_entities, log_current_prob, sequences = \
-                            self.agent.test_step(prev_relation, current_entities, actions_id,
-                                                 log_current_prob, _queries, batch_size, sequences,
-                                                 step == self.option.max_step_length - 1,
-                                                 self.option.random_agent)
+                        chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
+                            prev_relation, current_entities, actions_id,
+                            log_current_prob, _queries, batch_size, sequences,
+                            step,
+                            self.option.random_agent)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
 
-                # B x TIMES
-                # todo: flexible reward
-                #rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
-                #rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
-                
-                top_k_rewards_np, rewards_np, ranks_np = self.agent.get_context_reward(
-                    sequences.squeeze(1), all_correct[::self.option.test_times], test=True)
 
-                self.decode_and_save_paths(sequences.squeeze(1), data)
+                if (self.option.reward == "context") and (self.option.metric == "context"):
+                    sequences = sequences.squeeze(1)
+                elif (self.option.reward == "answer") and (self.option.metric == "context"):
+                    # post-process sequences from Minerva for context evaluation
+                    # - save top 1
+                    sequences = sequences[:, 0, :]
+                    # - add reversed query to the path
+                    # t=mask rel_inv h=start_entities -- path
+                    inv_queries = torch.tensor([
+                        self.data_loader.kg.rel2inv[rel.item()] for rel in queries
+                    ]).to(queries.device)
+                    sequences = torch.cat((answers.view(-1,1), inv_queries.view(-1,1), sequences), -1)
+                elif (self.option.reward == "answer") and (self.option.metric == "answer"):
+                    # sequences can be printed as is
+                    pass
 
-                #assert sequences.shape[0] == batch_size == len(all_correct[::self.option.test_times])
-                # todo: unify output shape of beam search
-                # if self.option.use_cuda:
-                #     current_entities = current_entities.cpu()
-                # current_entities_np = current_entities.numpy()
-                # current_entities_np = current_entities_np.reshape(-1, self.option.test_times)
+                if self.option.metric == "context":
+                    # - pad NO_OP
+                    _, _, ranks_np = self.agent.get_context_reward(
+                        sequences, all_correct[::self.option.test_times], test=True)
 
-                # for line_id in range(rewards.shape[0]):
-                #     seen = set()
-                #     pos = 0
-                #     find_ans = False
-                #     for loc_id in range(rewards.shape[1]):
-                #         if rewards[line_id][loc_id] == self.positive_reward:
-                #             find_ans = True
-                #             break
-                #         if current_entities_np[line_id][loc_id] not in seen:
-                #             seen.add(current_entities_np[line_id][loc_id])
-                #             pos += 1
-                # if find_ans:
-                #     if pos < 20:
-                #         final_reward_20 += 1
-                #         if pos < 10:
-                #             final_reward_10 += 1
-                #             if pos < 5:
-                #                 final_reward_5 += 1
-                #                 if pos < 3:
-                #                     final_reward_3 += 1
-                #                     if pos < 1:
-                #                         final_reward_1 += 1
-                #     r_rank += 1.0 / (pos + 1)
-                # else:
-                #     r_rank += 0  # an appropriate last rank = 1.0 / self.data_loader.num_entity, but no big difference
+                elif self.option.metric == "answer":
+                    rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
+                    rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
+
+                    current_entities_np = current_entities.numpy()
+                    current_entities_np = current_entities_np.reshape(-1, self.option.test_times)
+
+                    ranks = []
+                    for line_id in range(rewards.shape[0]):
+                        seen = set()
+                        pos = 0
+                        find_ans = False
+                        for loc_id in range(rewards.shape[1]):
+                            if rewards[line_id][loc_id] == self.positive_reward:
+                                find_ans = True
+                                ranks.append(pos)
+                                break
+                            if current_entities_np[line_id][loc_id] not in seen:
+                                seen.add(current_entities_np[line_id][loc_id])
+                                pos += 1
+                            # an appropriate last rank = 1.0 / self.data_loader.num_entity, if not found but no big difference
+                    ranks_np = np.array(ranks)
 
                 metrics[:, 2] += self.get_metrics(ranks_np)
 
                 if i < first_left_batch:
-                    metrics[:, 1] += self.get_metrics(ranks_np)
-                elif i == first_left_batch:  ## batches with inverse relations began
-                    metrics[:, 1] += self.get_metrics(ranks_np[:split])
-                    metrics[:, 0] += self.get_metrics(ranks_np[split:])
-                else:
                     metrics[:, 0] += self.get_metrics(ranks_np)
+                elif i == first_left_batch:  ## batches with inverse relations began
+                    metrics[:, 0] += self.get_metrics(ranks_np[:split])
+                    metrics[:, 1] += self.get_metrics(ranks_np[split:])
+                else:
+                    metrics[:, 1] += self.get_metrics(ranks_np)
+
+                # todo: flexible reward
+                self.decode_and_save_paths(torch.stack([start_entities, queries, answers], dim=-1),
+                                           sequences.squeeze(1), data)
 
             assert (metrics[:5, 2] == (metrics[:5, 0] + metrics[:5, 1])).all()
 
@@ -306,18 +328,30 @@ class Trainer():
             metrics[5] += 1.0 / (pos + 1)
         return metrics
 
-    def decode_and_save_paths(self, paths, data):
-        pass
-        #with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
-        #    pass
+    def decode_and_save_paths(self, queries, sequences, data):
+        return  ## todo: check why pad tokens are in sequences
+        # todo: hrt and trh for context search
+        str_qs   = [" ".join([self.data_loader.num2entity[h],
+                              self.data_loader.num2relation[r],
+                              self.data_loader.num2entity[t]])
+                    for h,r,t in queries.numpy()]
+        str_ents = [[self.data_loader.num2entity[idx] for idx in seq] for seq in sequences[:, 1::2].numpy()]
+        str_rels = [[self.data_loader.num2relation[idx] for idx in seq] for seq in sequences[:, ::2].numpy()]
 
+        with open(os.path.join(self.option.this_expsdir, f"{data}_paths.txt"), "a+", encoding='UTF-8') as f:
+            for qid, q in enumerate(str_qs):
+                out = []
+                for step in range(self.option.max_step_length):
+                    out.append(str_rels[qid][step])
+                    out.append(str_ents[qid][step])
+                f.write(q + "\t" + " ".join(out) + "\n")
 
     def save_model(self):
         path = os.path.join(self.option.this_expsdir, "model.pkt")
         # if not os.path.exists(dir_path):
         #     os.makedirs(dir_path)
         self.agent.cpu()
-        torch.save(self.agent.state_dict(), path)
+        torch.save(self.agent.my_state_dict(), path)
 
     def load_model(self):
         if self.option.load_model:
@@ -325,5 +359,5 @@ class Trainer():
         else:
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
-        self.agent.load_state_dict(torch.load(path))
+        self.agent.load_state_dict(torch.load(path), strict=False)
         

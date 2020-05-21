@@ -15,7 +15,6 @@ class CustomKG(KnowledgeGraph):
         self.unk_token_id = 3
         self.cls_token_id = 4
 
-        self.path_length = path_length
         # Number of reserved vocabs
         self.reserved_vocab = 5
         super().__init__(dataset)
@@ -53,7 +52,7 @@ class CustomKG(KnowledgeGraph):
 
         # Add reversed triples
         for data in ['train', 'valid', 'test']:
-            self.triplets[data] = self.triplets[data][:100]
+            #self.triplets[data] = self.triplets[data][:100]
             temp_len = len(self.triplets[data])
             temp_data = []
             for triple in self.triplets[data]:

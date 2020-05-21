@@ -9,7 +9,7 @@ class ReactiveBaseline():
         if self.option.use_cuda:
             self.value = self.value.cuda()
 
-    def get_baseline_value(self, *params):
+    def get_baseline_value(self, **params):
         return self.value
 
     def update(self, target):

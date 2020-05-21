@@ -45,15 +45,18 @@ class Agent(nn.Module):
         self.data_loader = data_loader
         # use joint id space from Transformer
         self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
-                                           self.option.relation_embed_size)
+                                           self.option.relation_embed_size,
+                                           padding_idx=self.data_loader.kg.pad_token_id
+                                           )
         self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
 
         self.state = None
 
         # todo: load optionally
-        self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
-        self.path_scoring_model.eval()
+        if (option.reward == "context") or (option.metric == "context"):
+            self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
+            self.path_scoring_model.eval()
 
         # control random state
         if self.option.use_cuda:
@@ -105,8 +108,8 @@ class Agent(nn.Module):
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
 
             # Masking PAD actions
-            dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
-            mask = torch.eq(out_relations_id, dummy_relations_id)  # B x n_actions
+            dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
+            mask = torch.eq(out_entities_id, dummy_actions_id)  # B x n_actions
             dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
             scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
             logits = scores.log_softmax(dim=-1)  # B x n_actions
@@ -139,19 +142,19 @@ class Agent(nn.Module):
         return loss, logits, action_id, next_entities, chosen_relation
 
     def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
-                  sequences, last_step, random):
+                  sequences, step, random):
 
         log_action_prob, out_relations_id, out_entities_id = self._step(
             prev_relation, current_entity, actions_id, queries, random)
 
         chosen_relation, chosen_entities, log_current_prob, sequences = self.test_search(
             log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size,
-             sequences, last_step)
+             sequences, step)
 
         return chosen_relation, chosen_entities, log_current_prob, sequences
 
     def test_search(self, log_current_prob, log_action_prob, out_relations_id, out_entities_id,
-                    batch_size, sequences, last_step):
+                    batch_size, sequences, step):
         ## tf: trainer beam search ##
 
         ## CAREFUL: t=torch.arange(6); t.view(3,2) does not equal t.view(2,3).t()
@@ -164,7 +167,7 @@ class Agent(nn.Module):
         log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
-        if not last_step:
+        if (step != self.option.max_step_length -1) or self.option.reward == "answer":
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
             # action ids in range 0, TIMES*MAX_OUT
         else:
@@ -204,7 +207,7 @@ class Agent(nn.Module):
         return chosen_relation, chosen_entities, log_current_prob, sequences
 
     def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.kg.pad_token_id
+        dummy_start_item = self.data_loader.relation2num['START']
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
@@ -259,3 +262,7 @@ class Agent(nn.Module):
     def print_parameter(self):
         for param in self.named_parameters():
             print(param[0], param[1])
+
+    def my_state_dict(self):
+        return {k:v for k,v in self.state_dict().items() if not k.startswith('path_scoring_model')}
+

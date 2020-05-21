@@ -28,7 +28,7 @@ class Knowledge_graph():
         more_out_count = 0
         for head in all_out_dict:
             # 1st action reserved for: stay in the same state
-            out_array[head, 0, 0] = self.data_loader.kg.pad_token_id
+            out_array[head, 0, 0] = self.data_loader.kg.unk_token_id
             out_array[head, 0, 1] = head
             num_out = 1
             for relation, tail in all_out_dict[head]:
@@ -50,27 +50,39 @@ class Knowledge_graph():
             if current_entities[i] == start_entities[i]:
                 relations = ret[i, :, 0]
                 entities = ret[i, :, 1]
-                # note: different from the orig due to front masking (mask inverse triple)
-                mask = (self.data_loader.kg.rel2inv[query_relations[i].item()] == relations) & answers[i].eq(entities)
+
+                if self.option.reward == "context":
+                    # note: different from the orig due to front masking (mask inverse triple)
+                    mask = (self.data_loader.kg.rel2inv[query_relations[i].item()] == relations)
+                elif self.option.reward == "answer":
+                    # orig masking
+                    mask = (query_relations[i] == relations)
+                mask = mask & answers[i].eq(entities)
+
                 ret[i, :, 0][mask] = self.data_loader.kg.pad_token_id
                 ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
             elif current_entities[i] == answers[i]:
                 relations = ret[i, :, 0]
                 entities = ret[i, :, 1]
-                # note: different from the orig due to front masking (mask orig triple)
-                mask = (query_relations[i] == relations) & start_entities[i].eq(entities)
+                if self.option.reward == "context":
+                    # note: different from the orig due to front masking (mask inverse triple)
+                    mask = (query_relations[i] == relations)
+                elif self.option.reward == "answer":
+                    # orig masking
+                    mask = (self.data_loader.kg.rel2inv[query_relations[i].item()] == relations)
+                mask = mask & start_entities[i].eq(entities)
                 ret[i, :, 0][mask] = self.data_loader.kg.pad_token_id
                 ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
 
-
-            # if step == self.option.max_step_length - 1:
-            #     relations = ret[i, :, 0]
-            #     entities = ret[i, :, 1]
-            #     answer = answers[i]
-            #     for j in range(entities.shape[0]):
-            #         if entities[j].item() in all_correct[i] and entities[j] != answer:
-            #             relations[j] = self.data_loader.kg.pad_token_id
-            #             entities[j] = self.data_loader.kg.pad_token_id
+            if self.option.reward == "answer":
+                if step == self.option.max_step_length - 1:
+                    relations = ret[i, :, 0]
+                    entities = ret[i, :, 1]
+                    answer = answers[i]
+                    for j in range(entities.shape[0]):
+                        if entities[j].item() in all_correct[i] and entities[j] != answer:
+                            relations[j] = self.data_loader.kg.pad_token_id
+                            entities[j] = self.data_loader.kg.pad_token_id
 
         return ret
 
@@ -81,5 +93,6 @@ class Knowledge_graph():
         return all_correct
 
     def update_all_correct(self, data):
-        for head, relation, tail, _ in data:
+        for head, relation, tail, inv_relation in data:
             self.all_correct[(head, relation)].add(tail)
+            self.all_correct[(tail, inv_relation)].add(head)
