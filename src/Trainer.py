@@ -117,7 +117,7 @@ class Trainer():
                 if self.option.use_cuda:
                     actions_id = actions_id.cuda()
                 loss, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_relation, current_entities, actions_id, queries, self.option.random_agent)
+                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences, self.option.random_agent)
 
                 sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
                 sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
@@ -207,7 +207,7 @@ class Trainer():
                     sequences = _start_entities.reshape(batch_size, -1, 1)
                 else:
                     prev_relation = queries
-                    sequences = torch.stack((_answers, _queries, _start_entities), -1).reshape(batch_size, -1, 3)
+                    sequences = torch.stack((answers, queries, start_entities), -1)#.reshape(batch_size, -1, 3)
 
                 current_entities = start_entities
                 log_current_prob = torch.zeros(start_entities.shape[0])
@@ -236,7 +236,7 @@ class Trainer():
 
 
                 if (self.option.reward == "context") and (self.option.metric == "context"):
-                    sequences = sequences.squeeze(1)
+                    sequences = sequences #.squeeze(1)
                 elif (self.option.reward == "answer") and (self.option.metric == "context"):
                     # post-process sequences from Minerva for context evaluation
                     # - save top 1
