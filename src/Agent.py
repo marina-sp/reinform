@@ -50,7 +50,7 @@ class Agent(nn.Module):
                                            )
         # todo: load optionally
         if (option.reward == "context") or (option.metric == "context"):
-            self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path, output_hidden_states=True)
+            self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
             self.path_scoring_model.eval()
             for par in self.path_scoring_model.parameters():
                 par.requires_grad_(False)
@@ -59,12 +59,12 @@ class Agent(nn.Module):
             def policy_step(sequences, *params):
                 cls = torch.ones(sequences.shape[0],1).type(torch.int64) * self.data_loader.kg.cls_token_id
                 sep = torch.ones(sequences.shape[0],1).type(torch.int64) * self.data_loader.kg.sep_token_id
-                input = copy.deepcopy(sequences)
+                input = copy.deepcopy(sequences).cpu()
                 input[:,0] = self.data_loader.kg.mask_token_id
                 input = torch.cat((cls, sequences, sep), dim=-1).type(torch.int64)\
                     .to(next(self.path_scoring_model.parameters()).device)
                 _, embs = self.path_scoring_model(input)
-                return embs[0][:,0].unsqueeze(0), None
+                return embs[:,0], None
             self.policy_step = policy_step
         else:
             self.policy_step = Policy_step(self.option)
@@ -96,16 +96,16 @@ class Agent(nn.Module):
                 seq = rel_ids.view(-1, 1)
             cls = torch.ones(seq.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
             sep = torch.ones(seq.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
-            inp = torch.cat((cls, seq, sep), dim=-1).type(torch.int64) \
+            inp = torch.cat((cls, seq.cpu(), sep), dim=-1).type(torch.int64) \
                 .to(next(self.path_scoring_model.parameters()).device)
 
             _, embs = self.path_scoring_model(inp)
+            embs = embs.to(rel_ids.device)
             if self.option.use_entity_embed:
-                action_emb = torch.cat((embs[0][:, 1], embs[0][:, 2]), dim=1)
+                action_emb = torch.cat((embs[:, 1], embs[:, 2]), dim=1)
             else:
-                action_emb = embs[0][:, 1]
-            return action_emb.reshape(-1, action_emb.shape[-1]) if len(rel_ids.shape)==1 \
-                else action_emb.reshape(-1, self.option.max_out, action_emb.shape[-1])
+                action_emb = embs[:, 1]
+            return action_emb.reshape(*rel_ids.shape, action_emb.shape[-1])
         else:
             if self.option.use_entity_embed:
                 parts = self.item_embedding(rel_ids), self.item_embedding(ent_ids)
@@ -131,9 +131,9 @@ class Agent(nn.Module):
             # 1. one step of rnn
             output, self.state = self.policy_step(prev_action_embedding, self.state)
 
-            current_state = output.squeeze()
-
-            state_query = torch.cat([current_state, self.action_encoder(queries, current_entity)], -1)
+            current_state = output.to(queries.device)
+            ent_q = self.action_encoder(queries, current_entity)
+            state_query = torch.cat([current_state, ent_q], -1)
 
             # MLP for policy#
             output = self.policy_mlp(state_query)  # B x 1 x action_emb
@@ -267,7 +267,7 @@ class Agent(nn.Module):
         if self.option.use_cuda:
             inputs = inputs.cuda()
             labels = labels.cuda()
-        output, _ = self.path_scoring_model(inputs.type(torch.int64)) #, masked_lm_labels=labels.type(torch.int64))
+        output, _= self.path_scoring_model(inputs.type(torch.int64)) #, masked_lm_labels=labels.type(torch.int64))
         #output = self.path_scoring_model(inputs.type(torch.float32)) # , masked_lm_labels=labels.type(torch.int64))
         #output = torch.randn(inputs.shape[0], 9, self.item_embedding.num_embeddings)
         prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].cpu().numpy()
