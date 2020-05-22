@@ -41,7 +41,7 @@ class RandomBaseline():
             if self.option.use_cuda:
                 actions_id = actions_id.cuda()
             loss, logits, action_id, next_entities, chosen_relation = \
-                self.agent.step(prev_relation, current_entities, actions_id, queries, True)
+                self.agent.step(prev_relation, current_entities, actions_id, queries, sequences, True)
 
             sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
             sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)

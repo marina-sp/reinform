@@ -56,6 +56,7 @@ class Agent(nn.Module):
                 par.requires_grad_(False)
 
         if self.option.bert_agent:
+            self.to_state = nn.Linear(256, self.option.state_embed_size)
             def policy_step(sequences, *params):
                 cls = torch.ones(sequences.shape[0],1).type(torch.int64) * self.data_loader.kg.cls_token_id
                 sep = torch.ones(sequences.shape[0],1).type(torch.int64) * self.data_loader.kg.sep_token_id
@@ -64,7 +65,9 @@ class Agent(nn.Module):
                 input = torch.cat((cls, sequences, sep), dim=-1).type(torch.int64)\
                     .to(next(self.path_scoring_model.parameters()).device)
                 _, embs = self.path_scoring_model(input)
-                return embs[:,0], None
+                #print(embs.shape, input.shape)
+                new_state = torch.tanh(self.to_state(embs.mean(1)))
+                return new_state, None
             self.policy_step = policy_step
         else:
             self.policy_step = Policy_step(self.option)
@@ -89,7 +92,7 @@ class Agent(nn.Module):
                       torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device)]
 
     def action_encoder(self, rel_ids, ent_ids):
-        if self.option.bert_agent:
+        if self.option.bert_agent and False:
             if self.option.use_entity_embed:
                 seq = torch.cat((rel_ids.view(-1, 1), ent_ids.view(-1, 1)), dim=1)
             else:

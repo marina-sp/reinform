@@ -52,10 +52,10 @@ class Trainer():
         #base_value = self.baseline.get_baseline_value()
         #final_reward = cum_discounted_reward - base_value
 
-        #reward_mean = torch.mean(final_reward)
-        #reward_std = torch.std(final_reward) + 1e-6
-        #final_reward = torch.div(final_reward - reward_mean, reward_std)
-        final_reward /= final_reward.max()
+        reward_mean = torch.mean(final_reward)
+        reward_std = torch.std(final_reward) + 1e-6
+        final_reward = torch.div(final_reward - reward_mean, reward_std)
+        #final_reward /= final_reward.max()
 
         loss = torch.mul(loss, final_reward)  # [B, T]
         entropy_loss = self.decaying_beta * self.entropy_reg_loss(all_logits)
@@ -72,7 +72,7 @@ class Trainer():
             self.agent.cuda()
 
         train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
-        train_data = self.data_loader.get_data("train")
+        train_data = self.data_loader.get_data("valid")
         environment = Environment(self.option, train_graph, train_data, "train")
 
         batch_counter = 0
@@ -128,6 +128,7 @@ class Trainer():
                 prev_relation = chosen_relation
                 current_entities = next_entities
                         
+            #print(sequences)
             # todo: introduce options for reward selection
             if self.option.reward == "answer":
                 rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
@@ -177,6 +178,7 @@ class Trainer():
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
                     self.agent.path_scoring_model.cuda()
+                    self.agent.to_state.cuda()
                 torch.cuda.empty_cache() 
                 #self.option.use_cuda = False
 

@@ -30,7 +30,7 @@ def read_options():
     parser.add_argument('--use_inverse', default=False, type=bool)
 
     # Agent configuration
-    parser.add_argument('--bert_agent', default=True, type=bool)
+    parser.add_argument('--bert_agent', default=False, type=bool)
     parser.add_argument('--random-agent', default=False, type=bool)
     parser.add_argument('--state_embed_size', default=100, type=int)
     parser.add_argument('--relation_embed_size', default=50, type=int)
@@ -94,16 +94,10 @@ def read_options():
     if not os.path.exists(option.this_expsdir):
         os.makedirs(option.this_expsdir)
 
-    if option.bert_agent:
-        option.relation_embed_size = 256
-
     if option.use_entity_embed is False:
         option.action_embed_size = option.relation_embed_size
     else:
         option.action_embed_size = option.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
-
-    if option.bert_agent:
-        option.state_embed_size = option.action_embed_size
 
     option.save()
     print(option.__dict__)
