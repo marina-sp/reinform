@@ -69,6 +69,8 @@ class Agent(nn.Module):
                 new_state = torch.tanh(self.to_state(embs.mean(1)))
                 return new_state, None
             self.policy_step = policy_step
+        #elif self.option.mode in ["bert_full", "bert_search"]:
+            self.action_dist = nn.Linear(self.option.state_embed_size, self.option.max_out)
         else:
             self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
@@ -120,15 +122,16 @@ class Agent(nn.Module):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
-        action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
 
         if random:
             prelim_scores = torch.randn(out_relations_id.shape, requires_grad=True)  # B x n_actions
             prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
-        else:
-            if self.option.bert_agent:
+        elif self.option.mode.endswith("agent"):
+            action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
+
+            if self.option.mode == "bert_agent":
                 prev_action_embedding = sequences
-            else:
+            elif self.option.mode == "lstm_agent":
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
 
             # 1. one step of rnn
@@ -141,6 +144,12 @@ class Agent(nn.Module):
             # MLP for policy#
             output = self.policy_mlp(state_query)  # B x 1 x action_emb
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
+        elif self.option.mode in ["bert_full", "bert_search"]:
+            # B x seq_len --> B * n_actions x seq_len
+            seq = sequences.repeat(self.option.max_out, 1)
+            action_sequences = torch.cat((seq, out_relations_id.view(-1, 1), out_entities_id.view(-1, 1)))
+            full_action_emb = self.policy_step(action_sequences)
+            prelim_scores = self.action_dist(full_action_emb)
 
         # Masking PAD actions
         dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
