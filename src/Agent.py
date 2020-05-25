@@ -62,7 +62,7 @@ class Agent(nn.Module):
                 sep = torch.ones(sequences.shape[0],1).type(torch.int64) * self.data_loader.kg.sep_token_id
                 input = copy.deepcopy(sequences).cpu()
                 input[:,0] = self.data_loader.kg.mask_token_id
-                input = torch.cat((cls, sequences, sep), dim=-1).type(torch.int64)\
+                input = torch.cat((cls, input, sep), dim=-1).type(torch.int64)\
                     .to(next(self.path_scoring_model.parameters()).device)
                 _, embs = self.path_scoring_model(input)
                 #print(embs.shape, input.shape)
@@ -70,7 +70,7 @@ class Agent(nn.Module):
                 return new_state, None
             self.policy_step = policy_step
         #elif self.option.mode in ["bert_full", "bert_search"]:
-            self.action_dist = nn.Linear(self.option.state_embed_size, self.option.max_out)
+            self.action_dist = nn.Linear(self.option.state_embed_size, 1)
         else:
             self.policy_step = Policy_step(self.option)
         self.policy_mlp = Policy_mlp(self.option)
@@ -146,10 +146,11 @@ class Agent(nn.Module):
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
         elif self.option.mode in ["bert_full", "bert_search"]:
             # B x seq_len --> B * n_actions x seq_len
-            seq = sequences.repeat(self.option.max_out, 1)
-            action_sequences = torch.cat((seq, out_relations_id.view(-1, 1), out_entities_id.view(-1, 1)))
-            full_action_emb = self.policy_step(action_sequences)
-            prelim_scores = self.action_dist(full_action_emb)
+            seq = sequences.repeat(self.option.max_out, 1).to(queries.device)
+            seq[:, 0] = self.data_loader.kg.mask_token_id
+            action_sequences = torch.cat((seq, out_relations_id.view(-1, 1), out_entities_id.view(-1, 1)), -1)
+            full_action_emb, _ = self.policy_step(action_sequences)
+            prelim_scores = self.action_dist(full_action_emb).reshape(-1, self.option.max_out).to(out_relations_id.device)
 
         # Masking PAD actions
         dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
