@@ -41,9 +41,9 @@ def read_options():
     parser.add_argument("--grad_clip_norm", default=5, type=int)
 
     parser.add_argument('--train_times', default=20, type=int)
-    parser.add_argument('--test_times', default=100, type=int)
+    parser.add_argument('--test_times', default=7, type=int)
     parser.add_argument("--train_batch", default=1, type=int)
-    parser.add_argument('--max_out', default=200, type=int)
+    parser.add_argument('--max_out', default=10, type=int)
     parser.add_argument('--max_step_length', default=3, type=int)
 
     # Reward configuration
@@ -57,8 +57,8 @@ def read_options():
     # Learning configuration
     parser.add_argument('--load_model', default='', type=str)
     parser.add_argument('--learning_rate', default=0.001, type=float)
-    parser.add_argument('--batch_size', default=10, type=int)
-    parser.add_argument('--test_batch_size', default=10, type=int)
+    parser.add_argument('--batch_size', default=2, type=int)
+    parser.add_argument('--test_batch_size', default=2, type=int)
     parser.add_argument('--decay_weight', default=0.02, type=float)
     parser.add_argument('--decay_batch', default=200, type=int)
     parser.add_argument('--decay_rate', default=0.9, type=float)
@@ -75,9 +75,6 @@ def read_options():
 
     d = vars(parser.parse_args())
     option = Option(d)
-
-    if option.load_model:
-        option.do_test = True
 
     if option.exp_name is None:
         option.tag = time.strftime("%y-%m-%d-%H-%M")
@@ -99,6 +96,9 @@ def read_options():
         option.action_embed_size = option.relation_embed_size
     else:
         option.action_embed_size = option.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
+
+    if option.mode in ["bert_search", "random"]:
+        option.train_batch = 0
 
     option.save()
     print(option.__dict__)

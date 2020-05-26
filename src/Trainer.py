@@ -117,7 +117,8 @@ class Trainer():
                 if self.option.use_cuda:
                     actions_id = actions_id.cuda()
                 loss, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences, self.option.random_agent)
+                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences,
+                                    self.option.mode == "random")
 
                 sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
                 sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
@@ -178,9 +179,11 @@ class Trainer():
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
                     self.agent.path_scoring_model.cuda()
-                    self.agent.to_state.cuda()
-                    self.agent.action_dist.cuda()
-                torch.cuda.empty_cache() 
+                    if self.option.mode.endswith("bert"):
+                        self.agent.policy_step.cuda()
+                        if self.option.mode == "bert_full":
+                            self.agent.action_dist.cuda()
+                torch.cuda.empty_cache()
                 #self.option.use_cuda = False
 
             test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
@@ -223,7 +226,7 @@ class Trainer():
                             prev_relation, current_entities, actions_id,
                             log_current_prob, queries, batch_size, sequences,
                             step,
-                            self.option.random_agent)
+                            self.option.mode == "random")
 
                     else:
                         actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
@@ -232,7 +235,7 @@ class Trainer():
                             prev_relation, current_entities, actions_id,
                             log_current_prob, _queries, batch_size, sequences,
                             step,
-                            self.option.random_agent)
+                            self.option.mode == "random")
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
@@ -360,7 +363,7 @@ class Trainer():
         torch.save(self.agent.my_state_dict(), path)
 
     def load_model(self):
-        if self.option.random_agent:
+        if self.option.mode == "random":
             return
         if self.option.load_model:
             dir_path = os.path.join(self.option.exps_dir, self.option.load_model)

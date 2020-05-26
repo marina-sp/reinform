@@ -37,6 +37,31 @@ class Policy_mlp(nn.Module):
         output = torch.relu(self.mlp_l2(hidden)).unsqueeze(1)
         return output
 
+class Bert_policy(nn.Module):
+    def __init__(self, data_loader, path_model, option):
+        super().__init__()
+        self.data_loader = data_loader
+        self.path_scoring_model = path_model
+        self.option = option
+        if self.option.mode != "bert_search":
+            self.to_state = nn.Linear(256, self.option.state_embed_size)
+
+    def forward(self, sequences, *params):
+        cls = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
+        sep = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
+        input = copy.deepcopy(sequences).cpu()
+        input[:, 0] = self.data_loader.kg.mask_token_id
+        input = torch.cat((cls, input, sep), dim=-1).type(torch.int64) \
+            .to(next(self.path_scoring_model.parameters()).device)
+        probs, embs = self.path_scoring_model(input)
+        # print(embs.shape, input.shape)
+        if self.option.mode != "bert_search":
+            new_state = torch.tanh(self.to_state(embs.mean(1)))
+        else:
+            new_state = None
+        max_score = probs[:,1].max(dim=-1)[0]
+        return new_state, max_score
+
 
 class Agent(nn.Module):
     def __init__(self, option, data_loader, graph=None):
@@ -55,25 +80,16 @@ class Agent(nn.Module):
             for par in self.path_scoring_model.parameters():
                 par.requires_grad_(False)
 
-        if self.option.bert_agent:
-            self.to_state = nn.Linear(256, self.option.state_embed_size)
-            def policy_step(sequences, *params):
-                cls = torch.ones(sequences.shape[0],1).type(torch.int64) * self.data_loader.kg.cls_token_id
-                sep = torch.ones(sequences.shape[0],1).type(torch.int64) * self.data_loader.kg.sep_token_id
-                input = copy.deepcopy(sequences).cpu()
-                input[:,0] = self.data_loader.kg.mask_token_id
-                input = torch.cat((cls, input, sep), dim=-1).type(torch.int64)\
-                    .to(next(self.path_scoring_model.parameters()).device)
-                _, embs = self.path_scoring_model(input)
-                #print(embs.shape, input.shape)
-                new_state = torch.tanh(self.to_state(embs.mean(1)))
-                return new_state, None
-            self.policy_step = policy_step
-        #elif self.option.mode in ["bert_full", "bert_search"]:
-            self.action_dist = nn.Linear(self.option.state_embed_size, 1)
+            self.path_scoring_model = self.fct
+
+        if self.option.mode.startswith("bert"):
+            self.policy_step = Bert_policy(self.data_loader, self.path_scoring_model, option)
+            if self.option.mode == "bert_full":
+                self.action_dist = nn.Linear(self.option.state_embed_size + self.option.action_embed_size, 1)
         else:
             self.policy_step = Policy_step(self.option)
-        self.policy_mlp = Policy_mlp(self.option)
+        if self.option.mode.endswith("mlp"):
+            self.policy_mlp = Policy_mlp(self.option)
 
         self.state = None
 
@@ -94,7 +110,7 @@ class Agent(nn.Module):
                       torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device)]
 
     def action_encoder(self, rel_ids, ent_ids):
-        if self.option.bert_agent and False:
+        if self.option.mode.startswith("bert") and False:
             if self.option.use_entity_embed:
                 seq = torch.cat((rel_ids.view(-1, 1), ent_ids.view(-1, 1)), dim=1)
             else:
@@ -118,7 +134,7 @@ class Agent(nn.Module):
             else:
                 return self.item_embedding(rel_ids)
 
-    def _step(self, prev_relation, current_entity, actions_id, queries, sequences, random):
+    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
@@ -126,12 +142,12 @@ class Agent(nn.Module):
         if random:
             prelim_scores = torch.randn(out_relations_id.shape, requires_grad=True)  # B x n_actions
             prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
-        elif self.option.mode.endswith("agent"):
+        elif self.option.mode.endswith("mlp"):
             action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
 
-            if self.option.mode == "bert_agent":
+            if self.option.mode == "bert_mlp":
                 prev_action_embedding = sequences
-            elif self.option.mode == "lstm_agent":
+            elif self.option.mode == "lstm_mlp":
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
 
             # 1. one step of rnn
@@ -149,9 +165,14 @@ class Agent(nn.Module):
             seq = sequences.repeat(self.option.max_out, 1).to(queries.device)
             seq[:, 0] = self.data_loader.kg.mask_token_id
             action_sequences = torch.cat((seq, out_relations_id.view(-1, 1), out_entities_id.view(-1, 1)), -1)
-            full_action_emb, _ = self.policy_step(action_sequences)
-            prelim_scores = self.action_dist(full_action_emb).reshape(-1, self.option.max_out).to(out_relations_id.device)
-
+            full_action_emb, max_act_score = self.policy_step(action_sequences)
+            if self.option.mode == "bert_full":
+                action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
+                action = action.reshape(-1, self.option.action_embed_size)
+                full_query = torch.cat((full_action_emb, action), dim=-1)
+                prelim_scores = self.action_dist(full_query).reshape(-1, self.option.max_out).to(out_relations_id.device)
+            else:
+                prelim_scores = max_act_score.reshape(-1, self.option.max_out).to(out_relations_id.device)
         # Masking PAD actions
         dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
         mask = torch.eq(out_entities_id, dummy_actions_id)  # B x n_actions
@@ -162,7 +183,7 @@ class Agent(nn.Module):
         return logits, out_relations_id, out_entities_id
 
     def step(self, *params):
-        logits, out_relations_id, out_entities_id = self._step(*params)
+        logits, out_relations_id, out_entities_id = self.get_action_dist(*params)
 
         # 4 sample action
         action_id = torch.multinomial(input=logits.exp(), num_samples=1, generator=self.generator)  # B x 1
@@ -189,7 +210,7 @@ class Agent(nn.Module):
     def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
                   sequences, step, random):
 
-        log_action_prob, out_relations_id, out_entities_id = self._step(
+        log_action_prob, out_relations_id, out_entities_id = self.get_action_dist(
             prev_relation, current_entity, actions_id, queries, sequences, random)
 
         chosen_relation, chosen_entities, log_current_prob, sequences = self.test_search(
@@ -218,7 +239,7 @@ class Agent(nn.Module):
         else:
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
 
-        if not self.option.bert_agent:
+        if self.option.mode == "lstm_mlp":
             new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
             # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
             new_state_0 = self.state[0].view(batch_size, -1, self.option.state_embed_size)
