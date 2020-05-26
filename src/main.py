@@ -30,6 +30,7 @@ def read_options():
     parser.add_argument('--use_inverse', default=False, type=bool)
 
     # Agent configuration
+    parser.add_argument('--mode')
     parser.add_argument('--bert_agent', default=False, type=bool)
     parser.add_argument('--random-agent', default=False, type=bool)
     parser.add_argument('--state_embed_size', default=100, type=int)
@@ -124,8 +125,9 @@ def main(option):
         trainer.test(data='test')
     else:
         trainer.load_model()
-        trainer.test(data='train', short=5)
-        trainer.test(data='valid', short=5)
+        trainer.test(data='train', short=50)
+        trainer.test(data='valid', short=50)
+        trainer.test(data='test', short=50)
 
 if __name__ == "__main__":
     #torch.set_printoptions(threshold=100000)

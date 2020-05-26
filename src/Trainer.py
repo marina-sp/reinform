@@ -179,6 +179,7 @@ class Trainer():
                 if "context" in [self.option.reward, self.option.metric]:
                     self.agent.path_scoring_model.cuda()
                     self.agent.to_state.cuda()
+                    self.agent.action_dist.cuda()
                 torch.cuda.empty_cache() 
                 #self.option.use_cuda = False
 
