@@ -208,7 +208,7 @@ class Trainer():
                 self.agent.zero_state(batch_size)
                 if self.option.reward == "answer":
                     prev_relation = self.agent.get_dummy_start_relation(batch_size)
-                    sequences = _start_entities.reshape(-1, 1)
+                    sequences = start_entities.reshape(-1, 1)
                 else:
                     prev_relation = queries
                     sequences = torch.stack((answers, queries, start_entities), -1)#.reshape(batch_size, -1, 3)
