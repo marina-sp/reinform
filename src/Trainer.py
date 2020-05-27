@@ -259,8 +259,6 @@ class Trainer():
                     triples = torch.stack((start_entities, queries, answers), dim=-1)
                     pass
 
-                self.decode_and_save_paths(triples, sequences, ranks_np, data)
-
                 if self.option.metric == "context":
                     # - pad NO_OP
                     _, _, ranks_np = self.agent.get_context_reward(
@@ -290,6 +288,8 @@ class Trainer():
                             # an appropriate last rank = self.data_loader.num_entity, if not found but no big difference
                             ranks.append(self.option.num_entity)
                     ranks_np = np.array(ranks)
+
+                self.decode_and_save_paths(triples, sequences, ranks_np, data)
 
                 metrics[:, 2] += self.get_metrics(ranks_np)
 
