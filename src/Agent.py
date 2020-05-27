@@ -37,6 +37,28 @@ class Policy_mlp(nn.Module):
         output = torch.relu(self.mlp_l2(hidden)).unsqueeze(1)
         return output
 
+class Bert_policy(nn.Module):
+    def __init__(self, data_loader, path_model, option):
+        super().__init__()
+        self.data_loader = data_loader
+        self.path_scoring_model = path_model
+        self.option = option
+        self.to_state = nn.Linear(256, self.option.state_embed_size)
+
+    def forward(self, sequences, *params):
+        cls = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
+        sep = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
+        input = copy.deepcopy(sequences).cpu()
+        input[:, 0] = self.data_loader.kg.mask_token_id
+        input = torch.cat((cls, input, sep), dim=-1).type(torch.int64) \
+            .to(next(self.path_scoring_model.parameters()).device)
+        probs, embs = self.path_scoring_model(input)
+        if not self.option.use_cuda:
+            probs, embs = probs.cpu(), embs.cpu()
+        # print(embs.shape, input.shape)
+        new_state = torch.tanh(self.to_state(embs.mean(1)))
+        return new_state, None
+
 
 class Agent(nn.Module):
     def __init__(self, option, data_loader, graph=None):
@@ -45,15 +67,27 @@ class Agent(nn.Module):
         self.data_loader = data_loader
         # use joint id space from Transformer
         self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
-                                           self.option.relation_embed_size)
-        self.policy_step = Policy_step(self.option)
-        self.policy_mlp = Policy_mlp(self.option)
+                                           self.option.relation_embed_size,
+                                           padding_idx=self.data_loader.kg.pad_token_id
+                                           )
+        # todo: load optionally
+        if (option.reward == "context") or (option.metric == "context"):
+            self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
+            self.path_scoring_model.eval()
+            for par in self.path_scoring_model.parameters():
+                par.requires_grad_(False)
+            #self.path_scoring_model = self.fct
+
+        if self.option.mode.startswith("bert"):
+            self.policy_step = Bert_policy(self.data_loader, self.path_scoring_model, option)
+            if self.option.mode == "bert_full":
+                self.action_dist = nn.Linear(self.option.state_embed_size + self.option.action_embed_size, 1)
+        else:
+            self.policy_step = Policy_step(self.option)
+        if self.option.mode.endswith("mlp"):
+            self.policy_mlp = Policy_mlp(self.option)
 
         self.state = None
-
-        # todo: load optionally
-        self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
-        self.path_scoring_model.eval()
 
         # control random state
         if self.option.use_cuda:
@@ -64,58 +98,79 @@ class Agent(nn.Module):
 
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
 
-        #if self.option.use_entity_embed:
-        #    self.entity_embedding = nn.Embedding(self.option.num_entity, self.option.entity_embed_size)
+    def fct(self, seq):
+        # only neccessary for testing purposes, simulates random bert output
+        embs = torch.randn(seq.shape[0], seq.shape[1], 256)
+        probs = torch.randn(seq.shape[0], seq.shape[1], self.option.num_entity + self.option.num_relation)
+        return probs, embs
 
     def zero_state(self, dim):
         self.state = [torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device),
                       torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device)]
 
     def action_encoder(self, rel_ids, ent_ids):
-        if self.option.use_entity_embed:
-            parts = self.item_embedding(rel_ids), self.item_embedding(ent_ids)
-            return torch.cat(parts, dim=-1)
-        else:
-            return self.item_embedding(rel_ids)
+        if self.option.mode.startswith("bert") and False:
+            if self.option.use_entity_embed:
+                seq = torch.cat((rel_ids.view(-1, 1), ent_ids.view(-1, 1)), dim=1)
+            else:
+                seq = rel_ids.view(-1, 1)
+            cls = torch.ones(seq.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
+            sep = torch.ones(seq.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
+            inp = torch.cat((cls, seq.cpu(), sep), dim=-1).type(torch.int64) \
+                .to(next(self.path_scoring_model.parameters()).device)
 
-    def _step(self, prev_relation, current_entity, actions_id, queries):
+            _, embs = self.path_scoring_model(inp)
+            embs = embs.to(rel_ids.device)
+            if self.option.use_entity_embed:
+                action_emb = torch.cat((embs[:, 1], embs[:, 2]), dim=1)
+            else:
+                action_emb = embs[:, 1]
+            return action_emb.reshape(*rel_ids.shape, action_emb.shape[-1])
+        else:
+            if self.option.use_entity_embed:
+                parts = self.item_embedding(rel_ids), self.item_embedding(ent_ids)
+                return torch.cat(parts, dim=-1)
+            else:
+                return self.item_embedding(rel_ids)
+
+    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
-        action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
 
-        if self.option.random_agent:
-            logits = torch.randn(out_relations_id.shape, requires_grad=True).log_softmax(dim=-1)  # B x n_actions
-            logits = logits.to(self.item_embedding.weight.device)
-        else:
-            prev_action_embedding = self.action_encoder(prev_relation, current_entity)
+        if random:
+            prelim_scores = torch.randn(out_relations_id.shape)  # B x n_actions
+            prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
+        elif self.option.mode.endswith("mlp"):
+            action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
+
+            if self.option.mode == "bert_mlp":
+                prev_action_embedding = sequences
+            elif self.option.mode == "lstm_mlp":
+                prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
 
             # 1. one step of rnn
             output, self.state = self.policy_step(prev_action_embedding, self.state)
 
-            current_state = output.squeeze()
-            queries_embedding = self.item_embedding(queries)
-            if self.option.use_entity_embed:
-                entity_embedding = self.item_embedding(current_entity)
-                state_query = torch.cat([current_state, queries_embedding, entity_embedding], -1)
-            else:
-                state_query = torch.cat([current_state, queries_embedding], -1)
+            current_state = output.to(queries.device)
+            ent_q = self.action_encoder(queries, current_entity)
+            state_query = torch.cat([current_state, ent_q], -1)
 
             # MLP for policy#
             output = self.policy_mlp(state_query)  # B x 1 x action_emb
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
 
-            # Masking PAD actions
-            dummy_relations_id = torch.ones_like(out_relations_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
-            mask = torch.eq(out_relations_id, dummy_relations_id)  # B x n_actions
-            dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
-            scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
-            logits = scores.log_softmax(dim=-1)  # B x n_actions
+        # Masking PAD actions
+        dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
+        mask = torch.eq(out_entities_id, dummy_actions_id)  # B x n_actions
+        dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
+        scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
+        logits = scores.log_softmax(dim=-1)  # B x n_actions
 
         return logits, out_relations_id, out_entities_id
 
     def step(self, *params):
-        logits, out_relations_id, out_entities_id = self._step(*params)
+        logits, out_relations_id, out_entities_id = self.get_action_dist(*params)
 
         # 4 sample action
         action_id = torch.multinomial(input=logits.exp(), num_samples=1, generator=self.generator)  # B x 1
@@ -140,19 +195,19 @@ class Agent(nn.Module):
         return loss, logits, action_id, next_entities, chosen_relation
 
     def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
-                  sequences, last_step):
+                  sequences, step, random):
 
-        log_action_prob, out_relations_id, out_entities_id = self._step(
-            prev_relation, current_entity, actions_id, queries)
+        log_action_prob, out_relations_id, out_entities_id = self.get_action_dist(
+            prev_relation, current_entity, actions_id, queries, sequences, random)
 
         chosen_relation, chosen_entities, log_current_prob, sequences = self.test_search(
             log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size,
-             sequences, last_step)
+             sequences, step)
 
         return chosen_relation, chosen_entities, log_current_prob, sequences
 
     def test_search(self, log_current_prob, log_action_prob, out_relations_id, out_entities_id,
-                    batch_size, sequences, last_step):
+                    batch_size, sequences, step):
         ## tf: trainer beam search ##
 
         ## CAREFUL: t=torch.arange(6); t.view(3,2) does not equal t.view(2,3).t()
@@ -165,19 +220,25 @@ class Agent(nn.Module):
         log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
-        if not last_step:
+        if (step != self.option.max_step_length -1) or self.option.reward == "answer":
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
             # action ids in range 0, TIMES*MAX_OUT
         else:
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
 
+        if self.option.mode == "lstm_mlp":
+            new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
+            # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
+            new_state_0 = self.state[0].view(batch_size, -1, self.option.state_embed_size)
+            new_state_1 = self.state[1].unsqueeze(1)  #.repeat(1, self.option.max_out, 1)
+            new_state_1 = self.state[1].view(batch_size, -1, self.option.state_embed_size)
 
-        # copy
-        new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
-        # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
-        new_state_0 = self.state[0].view(batch_size, -1, self.option.state_embed_size)
-        new_state_1 = self.state[1].unsqueeze(1)  #.repeat(1, self.option.max_out, 1)
-        new_state_1 = self.state[1].view(batch_size, -1, self.option.state_embed_size)
+            # select history according to beam search
+            top_k_action_id_state = top_k_action_id.unsqueeze(2).repeat(1, 1,
+                                                                        self.option.state_embed_size) // self.option.max_out
+            self.state = \
+                (torch.gather(new_state_0, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size),
+                 torch.gather(new_state_1, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size))
 
         # B*TIMES x MAX_OUT --> B x TIMES*MAX_OUT
         out_relations_id = out_relations_id.view(batch_size, -1)
@@ -189,23 +250,21 @@ class Agent(nn.Module):
         log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
         # assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
-        # select history according to beam search
-        top_k_action_id_state = top_k_action_id.unsqueeze(2).repeat(1, 1, self.option.state_embed_size) // self.option.max_out
-        self.state = \
-            (torch.gather(new_state_0, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size),
-             torch.gather(new_state_1, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size))
+        seq_len = sequences.shape[-1]
+        top_k_action_id_seq = top_k_action_id.unsqueeze(2).repeat(1, 1, seq_len) // self.option.max_out
+        # B * times x seq_len --> B x times x seq_len
+        sequences = sequences.unsqueeze(1).view(batch_size, -1, seq_len)
 
-        top_k_action_id_seq = top_k_action_id.unsqueeze(2).repeat(1, 1, sequences.shape[-1]) // self.option.max_out
-        sequences = torch.gather(sequences, dim=1, index=top_k_action_id_seq).view(-1, sequences.shape[-1])
+        sequences = torch.gather(sequences, dim=1, index=top_k_action_id_seq).view(-1, seq_len)
 
         # append new elements to the sequences
         sequences = torch.cat((sequences, chosen_relation.view(-1, 1), chosen_entities.view(-1, 1)), dim=-1)
-        sequences = sequences.view(batch_size, -1, sequences.shape[-1])
+        #sequences = sequences.view(batch_size, -1, sequences.shape[-1])
 
         return chosen_relation, chosen_entities, log_current_prob, sequences
 
     def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.kg.pad_token_id
+        dummy_start_item = self.data_loader.relation2num['START']
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
@@ -226,21 +285,18 @@ class Agent(nn.Module):
         inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
         labels = torch.ones_like(inputs)*-1
         labels[:,1]=sequences[:,0]
-        if self.option.use_cuda:
+        if next(self.path_scoring_model.parameters()).device.type == 'cuda':
             inputs = inputs.cuda()
-            labels = labels.cuda()
-        _, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
-        #output = torch.randn(inputs.shape[0], 9, len(self.data_loader.kg.vocab))
-        prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].cpu().numpy()
+            #labels = labels.cuda()
+        output, _= self.path_scoring_model(inputs.type(torch.int64)) #, masked_lm_labels=labels.type(torch.int64))
+        prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].numpy()
         prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
-        
         if not test:
             # for unfiltered rank == 1 uncomment:
-            rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
-
-            return _, rewards_prob, None
+            # rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
+            return None, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
         ranks = np.empty_like(labels).astype(np.int)
@@ -262,3 +318,7 @@ class Agent(nn.Module):
     def print_parameter(self):
         for param in self.named_parameters():
             print(param[0], param[1])
+
+    def my_state_dict(self):
+        return {k:v for k,v in self.state_dict().items() if not k.startswith('path_scoring_model')}
+

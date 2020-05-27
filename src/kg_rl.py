@@ -8,14 +8,13 @@ from pykg2vec.utils.kgcontroller import Triple
 
 class CustomKG(KnowledgeGraph):
 
-    def __init__(self, path_length, dataset='freebase15k_237'):
+    def __init__(self, dataset='WN18_RR'):
         self.pad_token_id = 0
         self.sep_token_id = 1
         self.mask_token_id = 2
         self.unk_token_id = 3
         self.cls_token_id = 4
 
-        self.path_length = path_length
         # Number of reserved vocabs
         self.reserved_vocab = 5
         super().__init__(dataset)
@@ -53,7 +52,7 @@ class CustomKG(KnowledgeGraph):
 
         # Add reversed triples
         for data in ['train', 'valid', 'test']:
-            self.triplets[data] = self.triplets[data][:100]
+            #self.triplets[data] = self.triplets[data][:100]
             temp_len = len(self.triplets[data])
             temp_data = []
             for triple in self.triplets[data]:

@@ -23,17 +23,22 @@ class Environment():
         while True:
             batch_idx = self.random_state.randint(0, len(self.data_array), size=self.option.batch_size)
             batch = self.data_array[batch_idx, :]
-            # start_entities = batch[:, 0]
-            # relations = batch[:, 1]
-            # answers = batch[:, 2]
-            start_entities = batch[:, 2]
-            relations = batch[:, 1]
-            answers = batch[:, 0]
-            inv_relations = batch[:,3]
+
+            if self.option.reward == "answer":
+                start_entities = batch[:, 0]
+                relations = batch[:, 1]
+                answers = batch[:, 2]
+                relations_np = relations.numpy()
+            elif self.option.reward == "context":
+                start_entities = batch[:, 2]
+                relations = batch[:, 1]
+                answers = batch[:, 0]
+                inv_relations = batch[:, 3]
+                relations_np = inv_relations.numpy()
 
             start_entities_np = start_entities.numpy()
-            relations_np = inv_relations.numpy()
             all_correct = self.graph.get_all_correct(start_entities_np, relations_np)
+
             start_entities, relations, answers, all_correct = self.data_times(start_entities, relations, answers,
                                                                               all_correct, "train")
 
@@ -44,6 +49,11 @@ class Environment():
         #test_data_count = self.option.test_batch_size
         current_idx = 0
         n_batches = (test_data_count-1) // self.option.test_batch_size + 1 if not n else n
+        # shuffle if short
+        if n is not None:
+            all_idx = self.random_state.randint(0, len(self.data_array), size=len(self.data_array))
+            self.data_array = self.data_array[all_idx, :]
+
         bar = tqdm(total=n_batches)
         for _ in range(n_batches):
             bar.update()
@@ -57,19 +67,22 @@ class Environment():
                 current_idx = test_data_count
 
             batch = self.data_array[batch_idx, :]
-            # start_entities = batch[:, 0]
-            # relations = batch[:, 1]
-            # answers = batch[:, 2]
 
-            start_entities = batch[:, 2]
-            relations = batch[:, 1]
-            answers = batch[:, 0]
-            inv_relations = batch[:,3]
+            if self.option.reward == "answer":
+                start_entities = batch[:, 0]
+                relations = batch[:, 1]
+                answers = batch[:, 2]
+                relations_np = relations.numpy()
+            elif self.option.reward == "context":
+                start_entities = batch[:, 2]
+                relations = batch[:, 1]
+                answers = batch[:, 0]
+                inv_relations = batch[:,3]
+                relations_np = inv_relations.numpy()
 
             start_entities_np = start_entities.numpy()
-            relations_np = inv_relations.numpy()
-
             all_correct = self.graph.get_all_correct(start_entities_np, relations_np)
+
             _start_entities, _relations, _answers, all_correct = self.data_times(start_entities, relations, answers,
                                                                                  all_correct, "test")
 
