@@ -28,9 +28,13 @@ class Knowledge_graph():
         more_out_count = 0
         for head in all_out_dict:
             # 1st action reserved for: stay in the same state
-            out_array[head, 0, 0] = self.data_loader.kg.unk_token_id
-            out_array[head, 0, 1] = head
-            num_out = 1
+            if self.option.reward == "answer":
+                out_array[head, 0, 0] = self.data_loader.kg.unk_token_id
+                out_array[head, 0, 1] = head
+                num_out = 1
+            else:
+                # add action to "END" state from every entity
+                num_out = 0
             for relation, tail in all_out_dict[head]:
                 if num_out == self.option.max_out:
                     more_out_count += 1
@@ -75,7 +79,8 @@ class Knowledge_graph():
                 ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
 
             if self.option.reward == "answer":
-                if step == self.option.max_step_length - 1:
+                # filter other correct answers at the last step
+                if step == (self.option.max_step_length - 1):
                     relations = ret[i, :, 0]
                     entities = ret[i, :, 1]
                     answer = answers[i]
