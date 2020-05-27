@@ -11,6 +11,8 @@ class Knowledge_graph():
         self.data_loader = data_loader
         self.out_array = None
         self.all_correct = None
+
+        self.end_node_idx = self.data_loader.kg.cls_token_id  # never gets to bert, a placeholder within num_entity range
         self.construct_graph()
 
     # 根据原始数据构建知识图谱，out_array存储每个节点向外的出口路径数组
@@ -34,7 +36,9 @@ class Knowledge_graph():
                 num_out = 1
             else:
                 # add action to "END" state from every entity
-                num_out = 0
+                out_array[head, 0, 0] = self.data_loader.kg.unk_token_id
+                out_array[head, 0, 1] = self.end_node_idx
+                num_out = 1
             for relation, tail in all_out_dict[head]:
                 if num_out == self.option.max_out:
                     more_out_count += 1
@@ -43,6 +47,12 @@ class Knowledge_graph():
                 out_array[head, num_out, 1] = tail
                 num_out += 1
                 all_correct[(head, relation)].add(tail)
+        if self.option.reward == "context":
+            # add the stay in END connection
+            assert (out_array[self.end_node_idx] == self.data_loader.kg.pad_token_id).all()
+            out_array[self.end_node_idx, 0, 0] = self.data_loader.kg.unk_token_id
+            out_array[self.end_node_idx, 0, 1] = self.end_node_idx
+
         self.out_array = torch.from_numpy(out_array)
         self.all_correct = all_correct
         print("more_out_count", more_out_count)

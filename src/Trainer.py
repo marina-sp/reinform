@@ -240,8 +240,11 @@ class Trainer():
 
 
                 if (self.option.reward == "context") and (self.option.metric == "context"):
-                    sequences = sequences #.squeeze(1)
+                    sequences = sequences
                     triples = torch.stack((answers, queries, start_entities), dim=-1)
+                    # filter out the END states and relations to the END states
+                    filter = (sequences == self.data_loader.kg.unk_token_id) | (sequences == test_graph.end_node_idx)
+                    sequences[filter] = self.data_loader.kg.pad_token_id
                 elif (self.option.reward == "answer") and (self.option.metric == "context"):
                     # post-process sequences from Minerva for context evaluation
                     # - save top 1
