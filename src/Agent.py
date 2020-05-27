@@ -104,8 +104,11 @@ class Agent(nn.Module):
 
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
 
-        #if self.option.use_entity_embed:
-        #    self.entity_embedding = nn.Embedding(self.option.num_entity, self.option.entity_embed_size)
+    def fct(self, seq):
+        # only neccessary for testing purposes, simulates random bert output
+        embs = torch.randn(seq.shape[0], seq.shape[1], 256)
+        probs = torch.randn(seq.shape[0], seq.shape[1], self.option.num_entity + self.option.num_relation)
+        return probs, embs
 
     def zero_state(self, dim):
         self.state = [torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device),
@@ -142,7 +145,7 @@ class Agent(nn.Module):
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
 
         if random:
-            prelim_scores = torch.randn(out_relations_id.shape, requires_grad=True)  # B x n_actions
+            prelim_scores = torch.randn(out_relations_id.shape)  # B x n_actions
             prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
         elif self.option.mode.endswith("mlp"):
             action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
@@ -304,8 +307,6 @@ class Agent(nn.Module):
             inputs = inputs.cuda()
             #labels = labels.cuda()
         output, _= self.path_scoring_model(inputs.type(torch.int64)) #, masked_lm_labels=labels.type(torch.int64))
-        #output = self.path_scoring_model(inputs.type(torch.float32)) # , masked_lm_labels=labels.type(torch.int64))
-        #output = torch.randn(inputs.shape[0], 9, self.item_embedding.num_embeddings)
         prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].numpy()
         prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 

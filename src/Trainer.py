@@ -174,6 +174,8 @@ class Trainer():
     def test(self, data='valid', short=False):
         with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "w", encoding='UTF-8') as f:
             f.write(f"Begin test on {data} data\n")
+        with open(os.path.join(self.option.this_expsdir, f"{data}_paths.txt"), "w", encoding='UTF-8') as f:
+            f.write("")
         with torch.no_grad():
             if self.option.use_cuda:
                 self.agent.cpu()
@@ -206,7 +208,7 @@ class Trainer():
                 self.agent.zero_state(batch_size)
                 if self.option.reward == "answer":
                     prev_relation = self.agent.get_dummy_start_relation(batch_size)
-                    sequences = _start_entities.reshape(batch_size, -1, 1)
+                    sequences = _start_entities.reshape(-1, 1)
                 else:
                     prev_relation = queries
                     sequences = torch.stack((answers, queries, start_entities), -1)#.reshape(batch_size, -1, 3)
@@ -239,6 +241,7 @@ class Trainer():
 
                 if (self.option.reward == "context") and (self.option.metric == "context"):
                     sequences = sequences #.squeeze(1)
+                    triples = torch.stack((answers, queries, start_entities), dim=-1)
                 elif (self.option.reward == "answer") and (self.option.metric == "context"):
                     # post-process sequences from Minerva for context evaluation
                     # - save top 1
@@ -249,9 +252,14 @@ class Trainer():
                         self.data_loader.kg.rel2inv[rel.item()] for rel in queries
                     ]).to(queries.device)
                     sequences = torch.cat((answers.view(-1,1), inv_queries.view(-1,1), sequences), -1)
+                    triples = torch.stack((start_entities, queries, answers), dim=1)
                 elif (self.option.reward == "answer") and (self.option.metric == "answer"):
-                    # sequences can be printed as is
+                    # sequences can be printed as is - but only the top 1
+                    sequences = sequences[::self.option.test_times, :]
+                    triples = torch.stack((start_entities, queries, answers), dim=-1)
                     pass
+
+                self.decode_and_save_paths(triples, sequences, ranks_np, data)
 
                 if self.option.metric == "context":
                     # - pad NO_OP
@@ -278,7 +286,9 @@ class Trainer():
                             if current_entities_np[line_id][loc_id] not in seen:
                                 seen.add(current_entities_np[line_id][loc_id])
                                 pos += 1
-                            # an appropriate last rank = 1.0 / self.data_loader.num_entity, if not found but no big difference
+                        if not find_ans:
+                            # an appropriate last rank = self.data_loader.num_entity, if not found but no big difference
+                            ranks.append(self.option.num_entity)
                     ranks_np = np.array(ranks)
 
                 metrics[:, 2] += self.get_metrics(ranks_np)
@@ -290,10 +300,6 @@ class Trainer():
                     metrics[:, 1] += self.get_metrics(ranks_np[split:])
                 else:
                     metrics[:, 1] += self.get_metrics(ranks_np)
-
-                # todo: flexible reward
-                self.decode_and_save_paths(torch.stack([start_entities, queries, answers], dim=-1),
-                                           sequences.squeeze(1), data)
 
             assert (metrics[:5, 2] == (metrics[:5, 0] + metrics[:5, 1])).all()
 
@@ -333,23 +339,24 @@ class Trainer():
             metrics[5] += 1.0 / (pos + 1)
         return metrics
 
-    def decode_and_save_paths(self, queries, sequences, data):
-        return  ## todo: check why pad tokens are in sequences
+    def decode_and_save_paths(self, queries, sequences, ranks, data):
         # todo: hrt and trh for context search
         str_qs   = [" ".join([self.data_loader.num2entity[h],
                               self.data_loader.num2relation[r],
                               self.data_loader.num2entity[t]])
                     for h,r,t in queries.numpy()]
-        str_ents = [[self.data_loader.num2entity[idx] for idx in seq] for seq in sequences[:, 1::2].numpy()]
-        str_rels = [[self.data_loader.num2relation[idx] for idx in seq] for seq in sequences[:, ::2].numpy()]
+        str_ents = [[self.data_loader.num2entity[idx] for idx in seq] for seq in sequences[:, ::2].numpy()]
+        str_rels = [[self.data_loader.num2relation[idx] for idx in seq] for seq in sequences[:, 1::2].numpy()]
 
         with open(os.path.join(self.option.this_expsdir, f"{data}_paths.txt"), "a+", encoding='UTF-8') as f:
             for qid, q in enumerate(str_qs):
-                out = []
-                for step in range(self.option.max_step_length):
+                out = [str_ents[qid][0]]
+                for step in range(len(str_rels[0])):
                     out.append(str_rels[qid][step])
-                    out.append(str_ents[qid][step])
-                f.write(q + "\t" + " ".join(out) + "\n")
+                    out.append(str_ents[qid][step+1])
+                path = " ".join(out)
+                rank = "{:3d}".format(ranks[qid]+1)
+                f.write("\t".join((q, path, rank)) + "\n")
 
     def save_model(self):
         path = os.path.join(self.option.this_expsdir, "model.pkt")

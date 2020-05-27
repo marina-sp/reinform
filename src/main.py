@@ -30,9 +30,7 @@ def read_options():
     parser.add_argument('--use_inverse', default=False, type=bool)
 
     # Agent configuration
-    parser.add_argument('--mode', default="bert_mlp", type=str)
-    #parser.add_argument('--bert_agent', default=False, type=bool)
-    #parser.add_argument('--random-agent', default=False, type=bool)
+    parser.add_argument('--mode', default='lstm_mlp', type=str)
     parser.add_argument('--state_embed_size', default=100, type=int)
     parser.add_argument('--relation_embed_size', default=50, type=int)
     parser.add_argument('--mlp_hidden_size', default=100, type=int)
@@ -91,7 +89,7 @@ def read_options():
         os.makedirs(option.exps_dir)
     if not os.path.exists(option.this_expsdir):
         os.makedirs(option.this_expsdir)
-    
+
     if option.mode == "random":
         option.test_times = 1
 
