@@ -72,7 +72,7 @@ class Trainer():
             self.agent.cuda()
 
         train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
-        train_data = self.data_loader.get_data("valid")
+        train_data = self.data_loader.get_data("valid" if self.option.reward == "context" else "train")
         environment = Environment(self.option, train_graph, train_data, "train")
 
         batch_counter = 0

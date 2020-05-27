@@ -43,8 +43,7 @@ class Bert_policy(nn.Module):
         self.data_loader = data_loader
         self.path_scoring_model = path_model
         self.option = option
-        if self.option.mode != "bert_search":
-            self.to_state = nn.Linear(256, self.option.state_embed_size)
+        self.to_state = nn.Linear(256, self.option.state_embed_size)
 
     def forward(self, sequences, *params):
         cls = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
@@ -57,13 +56,8 @@ class Bert_policy(nn.Module):
         if not self.option.use_cuda:
             probs, embs = probs.cpu(), embs.cpu()
         # print(embs.shape, input.shape)
-        if self.option.mode != "bert_search":
-            new_state = torch.tanh(self.to_state(embs.mean(1)))
-            max_score = None
-        else:
-            new_state = None
-            max_score = probs[:,1].max(dim=-1)[0]
-        return new_state, max_score
+        new_state = torch.tanh(self.to_state(embs.mean(1)))
+        return new_state, None
 
 
 class Agent(nn.Module):
@@ -165,19 +159,7 @@ class Agent(nn.Module):
             # MLP for policy#
             output = self.policy_mlp(state_query)  # B x 1 x action_emb
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
-        elif self.option.mode in ["bert_full", "bert_search"]:
-            # B x seq_len --> B * n_actions x seq_len
-            seq = sequences.repeat(self.option.max_out, 1).to(queries.device)
-            seq[:, 0] = self.data_loader.kg.mask_token_id
-            action_sequences = torch.cat((seq, out_relations_id.view(-1, 1), out_entities_id.view(-1, 1)), -1)
-            full_action_emb, max_act_score = self.policy_step(action_sequences)
-            if self.option.mode == "bert_full":
-                action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
-                action = action.reshape(-1, self.option.action_embed_size)
-                full_query = torch.cat((full_action_emb, action), dim=-1)
-                prelim_scores = self.action_dist(full_query).reshape(-1, self.option.max_out).to(out_relations_id.device)
-            else:
-                prelim_scores = max_act_score.reshape(-1, self.option.max_out).to(out_relations_id.device)
+
         # Masking PAD actions
         dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
         mask = torch.eq(out_entities_id, dummy_actions_id)  # B x n_actions

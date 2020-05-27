@@ -30,7 +30,8 @@ def read_options():
     parser.add_argument('--use_inverse', default=False, type=bool)
 
     # Agent configuration
-    parser.add_argument('--mode', default='lstm_mlp', type=str)
+    parser.add_argument('--mode', default='lstm_mlp', type=str,
+                        help='Which model to use: "lstm_mlp", "bert_mlp" or "random"')
     parser.add_argument('--state_embed_size', default=100, type=int)
     parser.add_argument('--relation_embed_size', default=50, type=int)
     parser.add_argument('--mlp_hidden_size', default=100, type=int)
@@ -92,14 +93,13 @@ def read_options():
 
     if option.mode == "random":
         option.test_times = 1
+        option.train_batch = 0
 
     if option.use_entity_embed is False:
         option.action_embed_size = option.relation_embed_size
     else:
         option.action_embed_size = option.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
 
-    if option.mode in ["bert_search", "random"]:
-        option.train_batch = 0
 
     option.save()
     print(option.__dict__)
