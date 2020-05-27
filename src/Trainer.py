@@ -179,12 +179,8 @@ class Trainer():
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
                     self.agent.path_scoring_model.cuda()
-                    if self.option.mode.endswith("bert"):
-                        self.agent.policy_step.cuda()
-                        if self.option.mode == "bert_full":
-                            self.agent.action_dist.cuda()
                 torch.cuda.empty_cache()
-                #self.option.use_cuda = False
+                self.option.use_cuda = False
 
             test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
             test_data = self.data_loader.get_data(data)
@@ -246,7 +242,7 @@ class Trainer():
                 elif (self.option.reward == "answer") and (self.option.metric == "context"):
                     # post-process sequences from Minerva for context evaluation
                     # - save top 1
-                    sequences = sequences[:, 0, :]
+                    sequences = sequences[::self.option.test_times, :]
                     # - add reversed query to the path
                     # t=mask rel_inv h=start_entities -- path
                     inv_queries = torch.tensor([

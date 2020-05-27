@@ -54,12 +54,15 @@ class Bert_policy(nn.Module):
         input = torch.cat((cls, input, sep), dim=-1).type(torch.int64) \
             .to(next(self.path_scoring_model.parameters()).device)
         probs, embs = self.path_scoring_model(input)
+        if not self.option.use_cuda:
+            probs, embs = probs.cpu(), embs.cpu()
         # print(embs.shape, input.shape)
         if self.option.mode != "bert_search":
             new_state = torch.tanh(self.to_state(embs.mean(1)))
+            max_score = None
         else:
             new_state = None
-        max_score = probs[:,1].max(dim=-1)[0]
+            max_score = probs[:,1].max(dim=-1)[0]
         return new_state, max_score
 
 
@@ -79,8 +82,7 @@ class Agent(nn.Module):
             self.path_scoring_model.eval()
             for par in self.path_scoring_model.parameters():
                 par.requires_grad_(False)
-
-            self.path_scoring_model = self.fct
+            #self.path_scoring_model = self.fct
 
         if self.option.mode.startswith("bert"):
             self.policy_step = Bert_policy(self.data_loader, self.path_scoring_model, option)
@@ -298,13 +300,13 @@ class Agent(nn.Module):
         inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
         labels = torch.ones_like(inputs)*-1
         labels[:,1]=sequences[:,0]
-        if self.option.use_cuda:
+        if next(self.path_scoring_model.parameters()).device.type == 'cuda':
             inputs = inputs.cuda()
-            labels = labels.cuda()
+            #labels = labels.cuda()
         output, _= self.path_scoring_model(inputs.type(torch.int64)) #, masked_lm_labels=labels.type(torch.int64))
         #output = self.path_scoring_model(inputs.type(torch.float32)) # , masked_lm_labels=labels.type(torch.int64))
         #output = torch.randn(inputs.shape[0], 9, self.item_embedding.num_embeddings)
-        prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].cpu().numpy()
+        prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].numpy()
         prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]

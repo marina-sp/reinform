@@ -30,9 +30,9 @@ def read_options():
     parser.add_argument('--use_inverse', default=False, type=bool)
 
     # Agent configuration
-    parser.add_argument('--mode')
-    parser.add_argument('--bert_agent', default=False, type=bool)
-    parser.add_argument('--random-agent', default=False, type=bool)
+    parser.add_argument('--mode', default="bert_mlp", type=str)
+    #parser.add_argument('--bert_agent', default=False, type=bool)
+    #parser.add_argument('--random-agent', default=False, type=bool)
     parser.add_argument('--state_embed_size', default=100, type=int)
     parser.add_argument('--relation_embed_size', default=50, type=int)
     parser.add_argument('--mlp_hidden_size', default=100, type=int)
@@ -41,9 +41,9 @@ def read_options():
     parser.add_argument("--grad_clip_norm", default=5, type=int)
 
     parser.add_argument('--train_times', default=20, type=int)
-    parser.add_argument('--test_times', default=7, type=int)
-    parser.add_argument("--train_batch", default=1, type=int)
-    parser.add_argument('--max_out', default=10, type=int)
+    parser.add_argument('--test_times', default=100, type=int)
+    parser.add_argument("--train_batch", default=1000, type=int)
+    parser.add_argument('--max_out', default=200, type=int)
     parser.add_argument('--max_step_length', default=3, type=int)
 
     # Reward configuration
@@ -57,8 +57,8 @@ def read_options():
     # Learning configuration
     parser.add_argument('--load_model', default='', type=str)
     parser.add_argument('--learning_rate', default=0.001, type=float)
-    parser.add_argument('--batch_size', default=2, type=int)
-    parser.add_argument('--test_batch_size', default=2, type=int)
+    parser.add_argument('--batch_size', default=128, type=int)
+    parser.add_argument('--test_batch_size', default=128, type=int)
     parser.add_argument('--decay_weight', default=0.02, type=float)
     parser.add_argument('--decay_batch', default=200, type=int)
     parser.add_argument('--decay_rate', default=0.9, type=float)
@@ -91,6 +91,9 @@ def read_options():
         os.makedirs(option.exps_dir)
     if not os.path.exists(option.this_expsdir):
         os.makedirs(option.this_expsdir)
+    
+    if option.mode == "random":
+        option.test_times = 1
 
     if option.use_entity_embed is False:
         option.action_embed_size = option.relation_embed_size
@@ -120,11 +123,11 @@ def main(option):
         trainer.train()
         trainer.save_model()
     if option.do_test:
-        trainer.load_model()
+        #trainer.load_model()
         trainer.test(data='valid')
         trainer.test(data='test')
     else:
-        trainer.load_model()
+        #trainer.load_model()
         trainer.test(data='train', short=50)
         trainer.test(data='valid', short=50)
         trainer.test(data='test', short=50)
