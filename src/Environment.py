@@ -50,7 +50,7 @@ class Environment():
         current_idx = 0
         n_batches = (test_data_count-1) // self.option.test_batch_size + 1 if not n else n
         # shuffle if short
-        if n is not None:
+        if n:
             all_idx = self.random_state.randint(0, len(self.data_array), size=len(self.data_array))
             self.data_array = self.data_array[all_idx, :]
 
