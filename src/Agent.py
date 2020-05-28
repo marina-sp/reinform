@@ -70,18 +70,20 @@ class Agent(nn.Module):
                                            self.option.relation_embed_size,
                                            padding_idx=self.data_loader.kg.pad_token_id
                                            )
-        # todo: load optionally
+
+        # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
             self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
             self.path_scoring_model.eval()
             for par in self.path_scoring_model.parameters():
                 par.requires_grad_(False)
-            #self.path_scoring_model = self.fct
 
+            ## replace the upper bert loading with this dummy function for debugging
+            # self.path_scoring_model = self.fct
+
+        # configure the learnable agent parameters
         if self.option.mode.startswith("bert"):
             self.policy_step = Bert_policy(self.data_loader, self.path_scoring_model, option)
-            if self.option.mode == "bert_full":
-                self.action_dist = nn.Linear(self.option.state_embed_size + self.option.action_embed_size, 1)
         else:
             self.policy_step = Policy_step(self.option)
         if self.option.mode.endswith("mlp"):
@@ -109,29 +111,11 @@ class Agent(nn.Module):
                       torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device)]
 
     def action_encoder(self, rel_ids, ent_ids):
-        if self.option.mode.startswith("bert") and False:
-            if self.option.use_entity_embed:
-                seq = torch.cat((rel_ids.view(-1, 1), ent_ids.view(-1, 1)), dim=1)
-            else:
-                seq = rel_ids.view(-1, 1)
-            cls = torch.ones(seq.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
-            sep = torch.ones(seq.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
-            inp = torch.cat((cls, seq.cpu(), sep), dim=-1).type(torch.int64) \
-                .to(next(self.path_scoring_model.parameters()).device)
-
-            _, embs = self.path_scoring_model(inp)
-            embs = embs.to(rel_ids.device)
-            if self.option.use_entity_embed:
-                action_emb = torch.cat((embs[:, 1], embs[:, 2]), dim=1)
-            else:
-                action_emb = embs[:, 1]
-            return action_emb.reshape(*rel_ids.shape, action_emb.shape[-1])
+        if self.option.use_entity_embed:
+            parts = self.item_embedding(rel_ids), self.item_embedding(ent_ids)
+            return torch.cat(parts, dim=-1)
         else:
-            if self.option.use_entity_embed:
-                parts = self.item_embedding(rel_ids), self.item_embedding(ent_ids)
-                return torch.cat(parts, dim=-1)
-            else:
-                return self.item_embedding(rel_ids)
+            return self.item_embedding(rel_ids)
 
     def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random):
         # Get state vector
@@ -216,7 +200,6 @@ class Agent(nn.Module):
         # shape: BATCH*TIMES --> BATCH x TIMES*MAX_OUT
         # linear order: BATCH(TIMES(MAX_OUT)))
 
-        # todo: adjust for the normal search at the last step
         log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
@@ -224,6 +207,7 @@ class Agent(nn.Module):
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
             # action ids in range 0, TIMES*MAX_OUT
         else:
+            # for the last step of the context generation: take only the most probable path
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
 
         if self.option.mode == "lstm_mlp":
@@ -250,6 +234,7 @@ class Agent(nn.Module):
         log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
         # assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
+        # select relevant sequences according to beam search
         seq_len = sequences.shape[-1]
         top_k_action_id_seq = top_k_action_id.unsqueeze(2).repeat(1, 1, seq_len) // self.option.max_out
         # B * times x seq_len --> B x times x seq_len

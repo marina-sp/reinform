@@ -128,9 +128,7 @@ class Trainer():
                 all_action_id.append(action_id)
                 prev_relation = chosen_relation
                 current_entities = next_entities
-                        
-            #print(sequences)
-            # todo: introduce options for reward selection
+
             if self.option.reward == "answer":
                 rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
             elif self.option.reward == "context":
@@ -199,7 +197,6 @@ class Trainer():
             first_left_batch, split = num_right // self.option.test_batch_size, num_right % self.option.test_batch_size
             print(len(test_data), num_right, self.option.test_batch_size, first_left_batch, split)
 
-            # todo: add sequences for the standard Minerva
             # _variable + all correct: with rollouts; variable: original data
             for i, (_start_entities, _queries, _answers, start_entities, queries, answers, all_correct)\
                     in enumerate(environment.get_next_batch(short)):
@@ -343,7 +340,6 @@ class Trainer():
         return metrics
 
     def decode_and_save_paths(self, queries, sequences, ranks, data):
-        # todo: hrt and trh for context search
         str_qs   = [" ".join([self.data_loader.num2entity[h],
                               self.data_loader.num2relation[r],
                               self.data_loader.num2entity[t]])
