@@ -84,8 +84,6 @@ class Agent(nn.Module):
         # configure the learnable agent parameters
         if self.option.mode.startswith("bert"):
             self.policy_step = Bert_policy(self.data_loader, self.path_scoring_model, option)
-            if self.option.mode == "bert_full":
-                self.action_dist = nn.Linear(self.option.state_embed_size + self.option.action_embed_size, 1)
         else:
             self.policy_step = Policy_step(self.option)
         if self.option.mode.endswith("mlp"):
