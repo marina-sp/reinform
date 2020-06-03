@@ -74,9 +74,9 @@ class Agent(nn.Module):
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
             self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
-            self.path_scoring_model.eval()
-            for par in self.path_scoring_model.parameters():
-                par.requires_grad_(False)
+            #self.path_scoring_model.eval()
+            #for par in self.path_scoring_model.parameters():
+            #    par.requires_grad_(False)
 
             ## replace the upper bert loading with this dummy function for debugging
             # self.path_scoring_model = self.fct
@@ -102,8 +102,8 @@ class Agent(nn.Module):
 
     def fct(self, seq):
         # only neccessary for testing purposes, simulates random bert output
-        embs = torch.randn(seq.shape[0], seq.shape[1], 256)
-        probs = torch.randn(seq.shape[0], seq.shape[1], self.option.num_entity + self.option.num_relation)
+        embs = torch.randn(seq.shape[0], seq.shape[1], 256, requires_grad=True)
+        probs = torch.randn(seq.shape[0], seq.shape[1], self.option.num_entity + self.option.num_relation, requires_grad=True)
         return probs, embs
 
     def zero_state(self, dim):
@@ -268,14 +268,13 @@ class Agent(nn.Module):
         cls_tensor = cls_tensor.type(torch.IntTensor)
         sep_tensor = sep_tensor.type(torch.IntTensor)
         inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
-        labels = torch.ones_like(inputs)*-1
-        labels[:,1]=sequences[:,0]
+        labels = sequences[:,0].numpy().reshape(-1)
         if next(self.path_scoring_model.parameters()).device.type == 'cuda':
             inputs = inputs.cuda()
             #labels = labels.cuda()
         output, _= self.path_scoring_model(inputs.type(torch.int64)) #, masked_lm_labels=labels.type(torch.int64))
-        prediction_scores, labels = output[:, 1].cpu(), labels[:, 1].numpy()
-        prediction_prob = prediction_scores.softmax(dim=-1).detach().numpy()
+        prediction_scores = output[:, 1].cpu()
+        prediction_prob = prediction_scores.softmax(dim=-1)  #.detach().numpy()  # B x n_actions
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
         if not test:
@@ -305,5 +304,5 @@ class Agent(nn.Module):
             print(param[0], param[1])
 
     def my_state_dict(self):
-        return {k:v for k,v in self.state_dict().items() if not k.startswith('path_scoring_model')}
+        return {k:v for k,v in self.state_dict().items()} # if not k.startswith('path_scoring_model')}
 

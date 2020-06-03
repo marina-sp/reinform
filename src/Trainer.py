@@ -132,8 +132,7 @@ class Trainer():
             if self.option.reward == "answer":
                 rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
             elif self.option.reward == "context":
-                _, rewards_np, _ = self.agent.get_context_reward(sequences, all_correct)
-                rewards = torch.from_numpy(rewards_np * 1.)
+                _, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
                 if self.option.use_cuda:
                     rewards = rewards.cuda()
 
@@ -370,7 +369,7 @@ class Trainer():
         else:
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
-        state_dict = {k:v for k,v in torch.load(path).items() if not k.startswith('path')} 
+        state_dict = {k:v for k,v in torch.load(path).items()}  # if not k.startswith('path')}
 
         log.info(f"load model from: {dir_path}\n")
         log.info("loaded parameters: {}\n".format(state_dict.keys()))
