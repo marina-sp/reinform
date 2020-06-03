@@ -137,7 +137,7 @@ class Trainer():
                     rewards = rewards.cuda()
 
             # apply baseline deduction
-            cum_discounted_reward = self.calc_cum_discounted_reward(rewards)
+            cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
             base_value = self.baseline.get_baseline_value(
                 batch=(start_entities, start_entities, queries, answers, all_correct),
                 graph=train_graph)
@@ -145,6 +145,8 @@ class Trainer():
                 base_value = self.calc_cum_discounted_reward(base_value)
             final_reward = cum_discounted_reward - base_value
             reinforce_loss, final_reward = self.calc_reinforce_loss(all_loss, all_logits, final_reward)
+            bert_loss = - rewards.log().sum()
+            reinforce_loss += bert_loss
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
@@ -162,7 +164,7 @@ class Trainer():
                 f.write("reward: " + str(rewards.mean()) + "\n")
             
             self.baseline.update(torch.mean(cum_discounted_reward))
-            self.agent.zero_grad()
+            self.optimizer.zero_grad()
             reinforce_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
             self.optimizer.step()
