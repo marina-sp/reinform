@@ -175,6 +175,7 @@ class Trainer():
         with open(os.path.join(self.option.this_expsdir, f"{data}_paths.txt"), "w", encoding='UTF-8') as f:
             f.write("")
         with torch.no_grad():
+            self.agent.eval()
             if self.option.use_cuda:
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
@@ -369,4 +370,9 @@ class Trainer():
         else:
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
-        self.agent.load_state_dict({k:v for k,v in torch.load(path).items() if k.startswith('item')}, strict=False)
+        state_dict = {k:v for k,v in torch.load(path).items() if not k.startswith('path')} 
+
+        log.info(f"load model from: {dir_path}\n")
+        log.info("loaded parameters: {}\n".format(state_dict.keys()))
+
+        self.agent.load_state_dict(state_dict, strict=False)
