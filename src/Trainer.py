@@ -137,16 +137,20 @@ class Trainer():
                     rewards = rewards.cuda()
 
             # apply baseline deduction
-            cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
+
+            # cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
             base_value = self.baseline.get_baseline_value(
                 batch=(start_entities, start_entities, queries, answers, all_correct),
                 graph=train_graph)
-            if base_value.shape[0] != 0:
+            if base_value.shape[0] != 1:
                 base_value = self.calc_cum_discounted_reward(base_value)
-            final_reward = cum_discounted_reward - base_value
-            reinforce_loss, final_reward = self.calc_reinforce_loss(all_loss, all_logits, final_reward)
-            bert_loss = - rewards.log().sum()
-            reinforce_loss += bert_loss
+            # final_reward = cum_discounted_reward - base_value
+            
+            base_rewards = rewards - base_value
+            cum_discounted_reward = self.calc_cum_discounted_reward(base_rewards).detach()
+            reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
+            bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean() 
+            reinforce_loss += 0.01 * bert_loss
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
@@ -158,7 +162,7 @@ class Trainer():
             avg_ep_correct = num_ep_correct / self.option.batch_size
 
             log.info("{:3.0f} reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
-                     .format(batch_counter, rewards.mean(), final_reward.mean(), num_ep_correct, avg_ep_correct,
+                     .format(batch_counter, rewards.mean(), norm_reward.mean(), num_ep_correct, avg_ep_correct,
                               torch.stack(all_loss).mean(), reinforce_loss.item()))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")

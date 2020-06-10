@@ -13,7 +13,7 @@ class ReactiveBaseline():
         return self.value
 
     def update(self, target):
-        self.value = torch.add((1 - self.update_rate) * self.value, self.update_rate * target)
+        self.value = torch.add((1 - self.update_rate) * self.value, self.update_rate * target).detach()
 
 class RandomBaseline():
     def __init__(self, option, agent):
