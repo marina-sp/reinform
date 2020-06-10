@@ -1,0 +1,8 @@
+Filtered_Mean_Rank = 192.20833333333334
+Filtered_Mean_Reciprocal_Rank = 0.32651867983042554
+H1 = 0.24251302083333334
+H10 = 0.494140625
+H3 = 0.3551432291666667
+Mean_Rank = 349.0625
+Mean_Reciprocal_Rank = 0.20086104348823644
+perplexity = tensor(153.3687)
