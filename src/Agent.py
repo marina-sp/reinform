@@ -5,7 +5,7 @@ import logging as log
 from torch.distributions.categorical import Categorical
 from collections import defaultdict
 import copy
-from transformers import BertForMaskedLM
+from transformers import BertForMaskedLM, BertConfig
 
 class Policy_step(nn.Module):
     def __init__(self, option):
@@ -73,7 +73,10 @@ class Agent(nn.Module):
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
-            self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
+            if option.load_config:
+                self.path_scoring_model = BertForMaskedLM(config=BertConfig.from_pretrained(self.option.bert_path))
+            else:
+                self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
             #self.path_scoring_model.eval()
             #for par in self.path_scoring_model.parameters():
             #    par.requires_grad_(False)

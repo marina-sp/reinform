@@ -53,6 +53,7 @@ def read_options():
     parser.add_argument('--metric', default='context', type=str,
                         help='How to evaluate the learned paths: "context" or "answer"')
     parser.add_argument('--bert_path', default='', type=str, help='Path to directory where the bert model is stored.')
+    parser.add_argument('--load-config', default=False)
     parser.add_argument('--baseline', default='react', type=str)
 
     # Learning configuration
