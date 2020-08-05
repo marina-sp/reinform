@@ -12,7 +12,12 @@ class Trainer():
         self.option = option
         self.agent = agent
         self.data_loader = data_loader
-        self.optimizer = torch.optim.Adam(self.agent.parameters(), lr=self.option.learning_rate)
+        # train bert with smaller rate
+        self.optimizer = torch.optim.Adam([
+                {'params': self.agent.non_bert_parameters},
+                {'params': self.agent.path_scoring_model.parameters(), 'lr': self.option.bert_lr}
+            ],
+            lr=self.option.learning_rate)
         self.positive_reward = torch.tensor(1.)
         self.negative_reward = torch.tensor(0.)
 
@@ -78,6 +83,10 @@ class Trainer():
         batch_counter = 0
         current_decay_count = 0
 
+        print_loss = 0.
+        print_rewards = 0.
+        print_act_loss = 0.
+
         for start_entities, queries, answers, all_correct in environment.get_next_batch():
             start = time.time()
             if batch_counter >= self.option.train_batch:
@@ -132,7 +141,7 @@ class Trainer():
             if self.option.reward == "answer":
                 rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
             elif self.option.reward == "context":
-                _, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
+                bert_loss, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
                 if self.option.use_cuda:
                     rewards = rewards.cuda()
 
@@ -149,8 +158,9 @@ class Trainer():
             base_rewards = rewards - base_value
             cum_discounted_reward = self.calc_cum_discounted_reward(base_rewards).detach()
             reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
-            bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean() 
-            reinforce_loss += 0.01 * bert_loss
+            #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
+
+            reinforce_loss += self.option.bert_rate * bert_loss
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
@@ -161,13 +171,16 @@ class Trainer():
             num_ep_correct = np.sum(reward_reshape)
             avg_ep_correct = num_ep_correct / self.option.batch_size
 
-            log.info("{:3.0f} reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\tloss: {:3.3f}\t reinforce loss: {:3.3f}"
-                     .format(batch_counter, rewards.mean(), norm_reward.mean(), num_ep_correct, avg_ep_correct,
-                              torch.stack(all_loss).mean(), reinforce_loss.item()))
+            print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
+            print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
+            print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
+            log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
+                     .format(batch_counter, print_rewards, norm_reward.mean(), num_ep_correct, avg_ep_correct,
+                              print_act_loss, print_loss))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
             
-            self.baseline.update(torch.mean(cum_discounted_reward))
+            self.baseline.update(torch.mean(base_rewards))
             self.optimizer.zero_grad()
             reinforce_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)

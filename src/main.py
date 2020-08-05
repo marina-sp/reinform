@@ -49,19 +49,19 @@ def read_options():
     parser.add_argument('--max_step_length', default=3, type=int)
 
     # Reward configuration
-    parser.add_argument('--reward', default='answer', type=str, help='Target to learn: "context" or "answer"')
+    parser.add_argument('--reward', default='context', type=str, help='Target to learn: "context" or "answer"')
     parser.add_argument('--metric', default='context', type=str,
                         help='How to evaluate the learned paths: "context" or "answer"')
     parser.add_argument('--bert_path', default='', type=str, help='Path to directory where the bert model is stored.')
-    parser.add_argument('--load-config', default=False)
+    parser.add_argument('--load_config', default=False)
     parser.add_argument('--baseline', default='react', type=str)
 
     # Learning configuration
     parser.add_argument('--load_model', default='', type=str,
                         help='Path to the directory with the model file "model.pkt"')
     parser.add_argument('--learning_rate', default=0.001, type=float)
-    parser.add_argument('--batch_size', default=3, type=int, help='Batch size used for training.')
-    parser.add_argument('--test_batch_size', default=5, type=int, help='Batch size used during evaluation.')
+    parser.add_argument('--batch_size', default=128, type=int, help='Batch size used for training.')
+    parser.add_argument('--test_batch_size', default=64, type=int, help='Batch size used during evaluation.')
 
     # Decay of the beta: the entropy regularization factor
     parser.add_argument('--decay_weight', default=0.02, type=float)
@@ -81,6 +81,12 @@ def read_options():
     parser.add_argument('--do_test', default=False, type=bool,
                         help='If False, performs a short evaluation on small slices of train, dev and test data;\
                               If True, performs a full evaluation on dev and test data.')
+
+    # Trainable Bert
+    parser.add_argument('--train_layers', default=[], type=list)
+    parser.add_argument('--bert_rate', default=10e-8, type=float)
+    parser.add_argument('--bert_lr', default=10e-8, type=float)
+    parser.add_argument('--bert_state_mode', default="avg_all", type=str, help='["avg_all", "avg_token", "sep"]')
 
     d = vars(parser.parse_args())
     option = Option(d)
@@ -142,9 +148,9 @@ def main(option):
         trainer.test(data='test')
     else:
         #trainer.load_model()
-        trainer.test(data='train', short=50)
-        trainer.test(data='valid', short=50)
-        trainer.test(data='test', short=50)
+        trainer.test(data='train', short=100)
+        trainer.test(data='valid', short=100)
+        trainer.test(data='test', short=100)
 
 if __name__ == "__main__":
     #torch.set_printoptions(threshold=100000)

@@ -65,11 +65,13 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         self.option = option
         self.data_loader = data_loader
+
         # use joint id space from Transformer
         self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
                                            self.option.relation_embed_size,
                                            padding_idx=self.data_loader.kg.pad_token_id
                                            )
+        self.non_bert_parameters = [par for par in self.item_embedding.parameters()]
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
@@ -77,20 +79,21 @@ class Agent(nn.Module):
                 self.path_scoring_model = BertForMaskedLM(config=BertConfig.from_pretrained(self.option.bert_path))
             else:
                 self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
-            #self.path_scoring_model.eval()
-            #for par in self.path_scoring_model.parameters():
-            #    par.requires_grad_(False)
 
+            self.make_bert_trainable(True)
             ## replace the upper bert loading with this dummy function for debugging
             # self.path_scoring_model = self.fct
 
         # configure the learnable agent parameters
         if self.option.mode.startswith("bert"):
             self.policy_step = Bert_policy(self.data_loader, self.path_scoring_model, option)
+            self.non_bert_parameters.extend([par for par in self.policy_step.to_state.parameters()])
         else:
             self.policy_step = Policy_step(self.option)
+            self.non_bert_parameters.extend([par for par in self.policy_step.parameters()])
         if self.option.mode.endswith("mlp"):
             self.policy_mlp = Policy_mlp(self.option)
+            self.non_bert_parameters.extend([par for par in self.policy_mlp.parameters()])
 
         self.state = None
 
@@ -102,6 +105,14 @@ class Agent(nn.Module):
             self.generator = torch.manual_seed(self.option.random_seed)
 
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
+
+    def make_bert_trainable(self, has_grad):
+        self.path_scoring_model.train(has_grad == [])
+        for name, par in self.path_scoring_model.named_parameters():
+            if any([f'layer.{id}' in name for id in self.option.has_grad]):
+                par.requires_grad_(True)
+            else:
+                par.requires_grad_(False)
 
     def fct(self, seq):
         # only neccessary for testing purposes, simulates random bert output
@@ -271,11 +282,16 @@ class Agent(nn.Module):
         cls_tensor = cls_tensor.type(torch.IntTensor)
         sep_tensor = sep_tensor.type(torch.IntTensor)
         inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
-        labels = sequences[:,0].numpy().reshape(-1)
+        #labels = sequences[:,0].numpy().reshape(-1)
+        labels = torch.ones_like(inputs) * -1
+        labels[:, 1] = sequences[:, 0]
         if next(self.path_scoring_model.parameters()).device.type == 'cuda':
             inputs = inputs.cuda()
-            #labels = labels.cuda()
-        output, _= self.path_scoring_model(inputs.type(torch.int64)) #, masked_lm_labels=labels.type(torch.int64))
+            labels = labels.cuda()
+
+        loss, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
+
+        labels = sequences[:,0].numpy().reshape(-1)
         prediction_scores = output[:, 1].cpu()
         prediction_prob = prediction_scores.softmax(dim=-1)  #.detach().numpy()  # B x n_actions
 
@@ -283,7 +299,7 @@ class Agent(nn.Module):
         if not test:
             # for unfiltered rank == 1 uncomment:
             # rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
-            return None, rewards_prob, None
+            return loss, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
         ranks = np.empty_like(labels).astype(np.int)
