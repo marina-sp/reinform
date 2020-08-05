@@ -52,11 +52,16 @@ class Bert_policy(nn.Module):
         input[:, 0] = self.data_loader.kg.mask_token_id
         input = torch.cat((cls, input, sep), dim=-1).type(torch.int64) \
             .to(next(self.path_scoring_model.parameters()).device)
-        probs, embs = self.path_scoring_model(input)
+        _, embs = self.path_scoring_model(input) # probs, embs
         if not self.option.use_cuda:
-            probs, embs = probs.cpu(), embs.cpu()
+            embs = embs.cpu()
         # print(embs.shape, input.shape)
-        new_state = torch.tanh(self.to_state(embs.mean(1)))
+        if self.option.bert_state_mode == "avg_token":
+            new_state = torch.tanh(self.to_state(embs[:, 1:-1, :].mean(1)))
+        elif self.option.bert_state_mode == "avg_all":
+            new_state = torch.tanh(self.to_state(embs.mean(1)))
+        elif self.option.bert_state_mode == "sep":
+            new_state = torch.tanh(self.to_state(embs[:, -1, :]))
         return new_state, None
 
 
