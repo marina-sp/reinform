@@ -4,14 +4,22 @@ import logging as log
 from Graph import Knowledge_graph
 from Environment import Environment
 from Baseline import ReactiveBaseline, RandomBaseline
+from Agent import Agent
+from Data import Data_loader
+from Option import Option
 import numpy as np
 
+from ray.tune import Trainable
 
-class Trainer():
-    def __init__(self, option, agent, data_loader):
+class Trainer(Trainable):
+    def _setup(self, option_dict):
+        option = Option(option_dict)
         self.option = option
-        self.agent = agent
-        self.data_loader = data_loader
+        self.data_loader = Data_loader(option)
+        option.num_entity = self.data_loader.num_entity
+        option.num_relation = self.data_loader.num_relation
+        self.agent = Agent(option, self.data_loader)
+
         # train bert with smaller rate
         self.optimizer = torch.optim.Adam([
                 {'params': self.agent.non_bert_parameters},
@@ -22,7 +30,7 @@ class Trainer():
         self.negative_reward = torch.tensor(0.)
 
         if option.baseline == "random" and option.reward == "context":
-            self.baseline = RandomBaseline(option, agent)
+            self.baseline = RandomBaseline(option, self.agent)
         elif option.baseline == "react":
             self.baseline = ReactiveBaseline(option, self.option.Lambda)
         else:
@@ -31,6 +39,22 @@ class Trainer():
 
         if self.option.use_cuda:
             self.agent.cuda()
+
+        with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "w", encoding='UTF-8') as f:
+            f.write("Begin train\n")
+        if self.option.use_cuda:
+            self.agent.cuda()
+
+        # store train state in the Trainer for ray hyperparameter search
+        self.train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
+        #train_data = "valid" if self.option.reward == "context" and not self.option.load_config else "train"
+        train_data = "valid"
+        train_data = self.data_loader.get_data(train_data)
+        environment = Environment(self.option, self.train_graph, train_data, "train")
+        self.batch_iterator = environment.get_next_batch()
+
+        self.batch_counter = torch.nn.Parameter(torch.tensor(0), requires_grad=False)
+        self.current_decay_count = torch.nn.Parameter(torch.tensor(0), requires_grad=False)
 
     def calc_cum_discounted_reward(self, rewards):
         running_add = torch.zeros([rewards.shape[0]])
@@ -69,122 +93,113 @@ class Trainer():
 
         return total_loss, final_reward
 
+        #
+        # print_loss = 0.
+        # print_rewards = 0.
+        # print_act_loss = 0.
 
-    def train(self):
-        with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "w", encoding='UTF-8') as f:
-            f.write("Begin train\n")
-        if self.option.use_cuda: 
-            self.agent.cuda()
 
-        train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
-        train_data = self.data_loader.get_data("valid" if self.option.reward == "context" else "train")
-        environment = Environment(self.option, train_graph, train_data, "train")
 
-        batch_counter = 0
-        current_decay_count = 0
+    def _train(self):
+        start_entities, queries, answers, all_correct = next(self.batch_iterator)
+        # start = time.time()
+        # if self.batch_counter >= self.option.train_batch:
+        #     break
+        # else:
+        #     self.batch_counter += 1
 
-        print_loss = 0.
-        print_rewards = 0.
-        print_act_loss = 0.
+        self.current_decay_count += 1
+        if self.current_decay_count == self.option.decay_batch:
+            self.decaying_beta *= self.option.decay_rate
+            self.current_decay_count.fill_(0)
 
-        for start_entities, queries, answers, all_correct in environment.get_next_batch():
-            start = time.time()
-            if batch_counter >= self.option.train_batch:
-                break
-            else:
-                batch_counter += 1
+        batch_size = start_entities.shape[0]
+        self.agent.zero_state(batch_size)
 
-            current_decay_count += 1
-            if current_decay_count == self.option.decay_batch:
-                self.decaying_beta *= self.option.decay_rate
-                current_decay_count = 0
+        if self.option.reward == "answer":
+            prev_relation = self.agent.get_dummy_start_relation(batch_size)
+            sequences = torch.empty((batch_size, 0), dtype=queries.dtype)
+        else:
+            prev_relation = queries
+            sequences = torch.stack((answers, queries, start_entities), -1)
 
-            batch_size = start_entities.shape[0]
-            self.agent.zero_state(batch_size)
+        current_entities = start_entities
+        queries_cpu = queries.detach().clone()
+        if self.option.use_cuda:
+            prev_relation = prev_relation.cuda()
+            queries = queries.cuda()
+            current_entities = current_entities.cuda()
 
-            if self.option.reward == "answer":
-                prev_relation = self.agent.get_dummy_start_relation(batch_size)
-                sequences = torch.empty((batch_size, 0), dtype=queries.dtype)
-            else:
-                prev_relation = queries
-                sequences = torch.stack((answers, queries, start_entities), -1)
+        all_loss = []
+        all_logits = []
+        all_action_id = []
 
-            current_entities = start_entities
-            queries_cpu = queries.detach().clone()
+        for step in range(self.option.max_step_length):
+            actions_id = self.train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
+                                             answers, all_correct, step)
             if self.option.use_cuda:
-                prev_relation = prev_relation.cuda()
-                queries = queries.cuda()
-                current_entities = current_entities.cuda()
+                actions_id = actions_id.cuda()
+            loss, logits, action_id, next_entities, chosen_relation= \
+                self.agent.step(prev_relation, current_entities, actions_id, queries, sequences,
+                                self.option.mode == "random")
 
-            all_loss = []
-            all_logits = []
-            all_action_id = []
+            sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
+            sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
 
-            for step in range(self.option.max_step_length):
-                actions_id = train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
-                                                 answers, all_correct, step)
-                if self.option.use_cuda:
-                    actions_id = actions_id.cuda()
-                loss, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences,
-                                    self.option.mode == "random")
+            all_loss.append(loss)
+            all_logits.append(logits)
+            all_action_id.append(action_id)
+            prev_relation = chosen_relation
+            current_entities = next_entities
 
-                sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
-                sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
+        if self.option.reward == "answer":
+            rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
+        elif self.option.reward == "context":
+            bert_loss, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
 
-                all_loss.append(loss)
-                all_logits.append(logits)
-                all_action_id.append(action_id)
-                prev_relation = chosen_relation
-                current_entities = next_entities
+        # cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
+        base_value = self.baseline.get_baseline_value(
+            batch=(start_entities, start_entities, queries, answers, all_correct),
+            graph=self.train_graph)
 
-            if self.option.reward == "answer":
-                rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
-            elif self.option.reward == "context":
-                bert_loss, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
-                if self.option.use_cuda:
-                    rewards = rewards.cuda()
+        # if base_value.shape[0] != 1:  # todo: check double discounting
+        #     base_value = self.calc_cum_discounted_reward(base_value)
+        # final_reward = cum_discounted_reward - base_value
 
-            # apply baseline deduction
+        # apply baseline deduction
+        base_rewards = rewards - base_value
+        cum_discounted_reward = self.calc_cum_discounted_reward(base_rewards).detach()
+        reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
+        #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
 
-            # cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
-            base_value = self.baseline.get_baseline_value(
-                batch=(start_entities, start_entities, queries, answers, all_correct),
-                graph=train_graph)
-            if base_value.shape[0] != 1:
-                base_value = self.calc_cum_discounted_reward(base_value)
-            # final_reward = cum_discounted_reward - base_value
-            
-            base_rewards = rewards - base_value
-            cum_discounted_reward = self.calc_cum_discounted_reward(base_rewards).detach()
-            reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
-            #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
+        reinforce_loss += self.option.bert_rate * bert_loss
 
-            reinforce_loss += self.option.bert_rate * bert_loss
+        if np.isnan(reinforce_loss.detach().cpu().numpy()):
+            raise ArithmeticError("Error in computing loss")
 
-            if np.isnan(reinforce_loss.detach().cpu().numpy()):
-                raise ArithmeticError("Error in computing loss")
+        self.baseline.update(torch.mean(base_rewards))
+        self.optimizer.zero_grad()
+        reinforce_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
+        self.optimizer.step()
 
-            reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
-            reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
-            reward_reshape = (reward_reshape > 0)
-            num_ep_correct = np.sum(reward_reshape)
-            avg_ep_correct = num_ep_correct / self.option.batch_size
+        # rewards logging
+        # reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
+        # reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
+        # reward_reshape = (reward_reshape > 0)
+        # num_ep_correct = np.sum(reward_reshape)
+        # avg_ep_correct = num_ep_correct / self.option.batch_size
 
-            print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
-            print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
-            print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
-            log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
-                     .format(batch_counter, print_rewards, norm_reward.mean(), num_ep_correct, avg_ep_correct,
-                              print_act_loss, print_loss))
-            with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-                f.write("reward: " + str(rewards.mean()) + "\n")
-            
-            self.baseline.update(torch.mean(base_rewards))
-            self.optimizer.zero_grad()
-            reinforce_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
-            self.optimizer.step()
+        # print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
+        # print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
+        # print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
+        # log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
+        #          .format(batch_counter, print_rewards, norm_reward.mean(), num_ep_correct, avg_ep_correct,
+        #                   print_act_loss, print_loss))
+        # with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
+        #     f.write("reward: " + str(rewards.mean()) + "\n")
+
+        return {'hits@top': rewards.type(torch.float32).mean()}
 
 
     def test(self, data='valid', short=False):
@@ -373,24 +388,26 @@ class Trainer():
                 rank = "{:3d}".format(ranks[qid]+1)
                 f.write("\t".join((q, path, rank)) + "\n")
 
-    def save_model(self):
-        path = os.path.join(self.option.this_expsdir, "model.pkt")
+    def _save(self, checkpoint_path=None):
+        if checkpoint_path is None:
+            checkpoint_path = os.path.join(self.option.this_expsdir, "model.pkt")
         # if not os.path.exists(dir_path):
         #     os.makedirs(dir_path)
         self.agent.cpu()
-        torch.save(self.agent.my_state_dict(), path)
+        torch.save(self.agent.my_state_dict(), checkpoint_path)
 
-    def load_model(self):
-        if self.option.mode == "random":
-            return
-        if self.option.load_model:
-            dir_path = os.path.join(self.option.exps_dir, self.option.load_model)
-        else:
-            dir_path = self.option.this_expsdir
-        path = os.path.join(dir_path, "model.pkt")
-        state_dict = {k:v for k,v in torch.load(path).items()}  # if not k.startswith('path')}
+    def _restore(self, checkpoint_path=None):
+        if checkpoint_path is None:
+            if self.option.mode == "random":
+                return
+            if self.option.load_model:
+                dir_path = os.path.join(self.option.exps_dir, self.option.load_model)
+            else:
+                dir_path = self.option.this_expsdir
+            checkpoint_path = os.path.join(dir_path, "model.pkt")
+        state_dict = {k:v for k,v in torch.load(checkpoint_path).items()}  # if not k.startswith('path')}
 
-        log.info(f"load model from: {dir_path}\n")
+        log.info(f"load model from: {checkpoint_path}\n")
         log.info("loaded parameters: {}\n".format(state_dict.keys()))
 
         self.agent.load_state_dict(state_dict, strict=False)

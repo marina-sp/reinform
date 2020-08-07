@@ -303,7 +303,7 @@ class Agent(nn.Module):
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
         if not test:
             # for unfiltered rank == 1 uncomment:
-            # rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
+            rewards_prob = rewards_prob > torch.tensor(np.percentile(prediction_prob.detach().numpy(), q=99.9, axis=-1))
             return loss, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
