@@ -61,7 +61,7 @@ space = {
     # 'entity_embed_size', default=5, type=int)
 
     'train_times': hp.choice('train_unrolls', [1,5,10,20]),   #'Number of rollouts of the same episode (triple).')
-    #'test_times', default=100,   #'Beam search size for one episode (triple) ')
+    'test_times': 100,   ##'Beam search size for one episode (triple) ')
     "train_batch": 1000,   #'Number of training iterations.')
     'max_out': 200,   #'Maximal number of actions stored for one state.')
     'max_step_length': 3,
@@ -69,13 +69,13 @@ space = {
     # Reward configuration
     'reward': 'context',   #'Target to learn: "context" or "answer"')
     'metric': 'context',  #'How to evaluate the learned paths: "context" or "answer"')
-    #'load_config', default=False)
+    'load_config': False, ##
     'baseline': 'react',
 
     # Learning configuration
     'learning_rate': hp.choice('lr', [0.1, 0.01, 0.001, 0.0001, 0.00001]),
     'batch_size': 128,   #'Batch size used for training.')
-    #'test_batch_size', default=64,   #'Batch size used during evaluation.')
+    'test_batch_size': 64, ##'Batch size used during evaluation.')
 
     # Decay of the beta: the entropy regularization factor
     'decay_weight':0.02,
@@ -126,7 +126,7 @@ current_best_params = [
         # 'entity_embed_size', default=5, type=int)
 
         'train_times': 20,   #'Number of rollouts of the same episode (triple).')
-        #'test_times', default=100,   #'Beam search size for one episode (triple) ')
+        'test_times': 100,   #'Beam search size for one episode (triple) ')
         "train_batch": 500,   #'Number of training iterations.')
         'max_out': 200,   #'Maximal number of actions stored for one state.')
         'max_step_length': 3,
@@ -134,13 +134,13 @@ current_best_params = [
         # Reward configuration
         'reward': 'context',   #'Target to learn: "context" or "answer"')
         'metric': 'context',  #'How to evaluate the learned paths: "context" or "answer"')
-        #'load_config', default=False)
+        'load_config': False,
         'baseline': 'react',
 
         # Learning configuration
         'learning_rate': 0.001,
         'batch_size': 64,   #'Batch size used for training.')
-        #'test_batch_size', default=64,   #'Batch size used during evaluation.')
+        'test_batch_size': 64,   #'Batch size used during evaluation.')
 
         # Decay of the beta: the entropy regularization factor
         'decay_weight':0.02,
@@ -193,13 +193,13 @@ current_best_params = [
         # Reward configuration
         'reward': 'context',  # 'Target to learn: "context" or "answer"')
         'metric': 'context',  # 'How to evaluate the learned paths: "context" or "answer"')
-        # 'load_config', default=False)
+        'load_config': False,
         'baseline': 'react',
 
         # Learning configuration
         'learning_rate': 0.01,
         'batch_size': 64,  # 'Batch size used for training.')
-        # 'test_batch_size', default=64,   #'Batch size used during evaluation.')
+        'test_batch_size': 64,   #'Batch size used during evaluation.')
 
         # Decay of the beta: the entropy regularization factor
         'decay_weight': 0.02,
