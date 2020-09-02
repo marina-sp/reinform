@@ -4,7 +4,54 @@ import torch
 
 class Option:
     def __init__(self, d):
-        self.__dict__ = d
+        # get leaf values for nested dict in hypersearch
+        def get_kv(d):
+            for key, value in d.items():
+                if isinstance(value, dict):
+                    for kk, vv in get_kv(value):
+                        yield kk, vv
+                else: 
+                    yield key, value
+        self.__dict__ = dict(get_kv(d))
+        self.set_def()
+        print(self.__dict__)
+
+    def set_def(self):
+        if "train_batch" not in self.__dict__.keys():
+            self.train_batch = 10
+        if "batch_size" not in self.__dict__.keys():
+            self.batch_size = 64
+
+        if self.exp_name is None:
+            self.tag = time.strftime("%y-%m-%d-%H-%M")
+        else:
+            self.tag = self.exp_name
+        if torch.cuda.is_available():
+            self.use_cuda = True
+        else:
+            self.use_cuda = False
+
+        self.this_expsdir = os.path.join(self.exps_dir, self.tag)
+        if not os.path.exists(self.exps_dir):
+            os.makedirs(self.exps_dir)
+        if not os.path.exists(self.this_expsdir):
+            os.makedirs(self.this_expsdir)
+
+        if not self.bert_path:  
+            if self.dataset == "WN18_RR":
+                self.bert_path = "../../mastersthesis/transformers/knowledge_graphs/wn_output_1000/"
+            elif self.dataset == "freebase15k_237":
+                self.bert_path = "../../mastersthesis/transformers/knowledge_graphs/output_minevra_a1/"
+
+        if self.mode == "random":
+            self.test_times = 1                                                                                                                                                                                             # self.train_batch = 0
+
+        if self.use_entity_embed is False:
+            self.action_embed_size = self.relation_embed_size
+        else:
+            self.action_embed_size = self.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
+
+        self.save()
 
     def save(self):
         with open (os.path.join(self.this_expsdir, "option.txt"), "w", encoding='UTF-8') as f:

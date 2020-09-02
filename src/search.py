@@ -15,45 +15,42 @@ from ray.tune.schedulers import HyperBandScheduler
 
 from Trainer import Trainer
 from hyperopt import hp
+import os 
 
 np.random.seed(17)
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--smoke-test", action="store_true", help="Finish quickly for testing")
+parser.add_argument("--n", type=int)
+
 args, _ = parser.parse_known_args()
 if args.smoke_test:
-    ray.init(num_cpus=4)
+    ray.init(num_cpus=1)
 else:
-    ray.init(num_gpus=4) #, memory=15*1024*1024*1024
-
-
-# Hyperband early stopping, configured with `episode_reward_mean` as the
-# objective and `training_iteration` as the time unit,
-# which is automatically filled by Tune.
-hyperband = HyperBandScheduler(
-    time_attr="training_iteration",
-    metric="hits@top",
-    mode="max",
-    max_t=1000)
+    ray.init(num_gpus = torch.cuda.device_count()) # num_gpus=4) #, memory=15*1024*1024*1024
 
 space = {
     # Dataset
+    'exps_dir': '../exps/', 'exp_name': 'demo',
     'datadir': "../datasets",
     'dataset': "WN18_RR",   #["freebase15k_237", "WN18_RR"])
-    'bert_path': "../../mastersthesis/transformers/knowledge_graphs/minerva_output_a1", #'Path to directory where the bert model is stored.')
-    'use_inverse': False,   # 'Set true to include inversed triples to the training.')
+    'bert_path': "/mounts/Users/student/speranskaya/work/kge/contextualized/mastersthesis/transformers/knowledge_graphs/minerva_wn_a1/", #'Path to directory where the bert model is stored.')
+    'use_inverse': hp.choice('use_inverse', [False, True]),   # 'Set true to include inversed triples to the training.')
 
     # Agent configuration
     'agent_mode': hp.choice('agent_mode', [
         {
-            'mode': "lstm_mlp"
+            'mode': "lstm_mlp",
+            'batch_size': 64
         },
         {
             'mode': "bert_mlp",
-            'bert_state_mode': hp.choice('state_mode', ["avg_all", "avg_token", "sep"])
+            'batch_size': 32
         }
     ]),  # 'Which model to use: "lstm_mlp", "bert_mlp" or "random"')
+
+    'bert_state_mode': hp.choice('bert_state_mode', ['avg_all', 'avg_token', 'sep']),
     'state_embed_size': hp.choice('state_size', [100, 200]),    # 'Size of the context encoding (LSTM state or BERT reduced state representation)')
     'relation_embed_size': hp.choice('rel_emb_size', [50,100,200]),   #'Size of the relation embeddings.')
     'mlp_hidden_size': hp.choice('mlp_size', [100,200,300]),   #'Size of the hidden MLP of the Agent.')
@@ -69,7 +66,7 @@ space = {
     # Reward configuration
     'reward': 'context',   #'Target to learn: "context" or "answer"')
     'metric': 'context',  #'How to evaluate the learned paths: "context" or "answer"')
-    'load_config': False, ##
+    'load_config': False,
     'baseline': 'react',
 
     # Learning configuration
@@ -94,35 +91,28 @@ space = {
         {
             'train_layers': [],
             'bert_rate': 1,
-            'bert_lr': 0,
-            'bert_state_mode': "sep"
+            'bert_lr': 0
         },
         {
             'train_layers': hp.choice('train_layers', [
                 [5], [5,4], [5,4,3], [5,4,3,2], [5,4,3,2,1], [5,4,3,2,1,0]
             ]),
             'bert_rate': hp.choice('bert_loss_part', [10e-3, 10e-5, 10e-8, 10e-10]),
-            'bert_lr': hp.choice('bert_lr', [10e-3, 10e-5, 10e-8, 10e-10]),
+            'bert_lr': hp.choice('bert_lr', [10e-3, 10e-5, 10e-8, 10e-10])
         }
     ])
 }
 
 current_best_params = [
     {
-        # Dataset
-        'datadir': "../datasets",
-        'dataset': "WN18_RR",   #["freebase15k_237", "WN18_RR"])
-        'bert_path': "../../mastersthesis/transformers/knowledge_graphs/minerva_output_a1", #'Path to directory where the bert model is stored.')
-        'use_inverse': False,   # 'Set true to include inversed triples to the training.')
+        'use_inverse': 0,
 
         # Agent configuration
-        'agent_mode': {
-            'mode': "lstm_mlp"
-            },  # 'Which model to use: "lstm_mlp", "bert_mlp" or "random"')
-        'state_embed_size': 200,    # 'Size of the context encoding (LSTM state or BERT reduced state representation)')
-        'relation_embed_size': 100,   #'Size of the relation embeddings.')
-        'mlp_hidden_size': 200,   #'Size of the hidden MLP of the Agent.')
-        'use_entity_embed': False,
+        'agent_mode': 0,  # 'Which model to use: "lstm_mlp", "bert_mlp" or "random"')
+        'state_size': 1,    # 'Size of the context encoding (LSTM state or BERT reduced state representation)')
+        'rel_emb_size': 1,   #'Size of the relation embeddings.')
+        'mlp_size': 0,   #'Size of the hidden MLP of the Agent.')
+        'ent_emb': 1,
         # 'entity_embed_size', default=5, type=int)
 
         'train_times': 20,   #'Number of rollouts of the same episode (triple).')
@@ -155,37 +145,28 @@ current_best_params = [
         'random_seed': 1,
 
         # Trainable Bert
-        'bert_training':
-            {
-                'train_layers':
-                    [5],
-                'bert_rate': 1,
-                'bert_lr': 10e-6,
-            }
+        'bert_training': 1,
+        'train_layers': 0,
+        'bert_loss_part': 1,
+        'bert_lr': 1, # 10e-6  
+        'bert_state_mode': 2
     },
     {
-        # Dataset
-        'datadir': "../datasets",
-        'dataset': "WN18_RR",  # ["freebase15k_237", "WN18_RR"])
-        'bert_path': "../../mastersthesis/transformers/knowledge_graphs/minerva_output_a1",
-        # 'Path to directory where the bert model is stored.')
-        'use_inverse': False,  # 'Set true to include inversed triples to the training.')
+        'use_inverse': 0,
 
         # Agent configuration
-        'agent_mode':
-            {
-                'mode': "bert_mlp",
-                'bert_state_mode': "avg_all"
-            },  # 'Which model to use: "lstm_mlp", "bert_mlp" or "random"')
-        'state_embed_size': 200,    # 'Size of the context encoding (LSTM state or BERT reduced state representation)')
-        'relation_embed_size': 100,   #'Size of the relation embeddings.')
-        'mlp_hidden_size': 200,   #'Size of the hidden MLP of the Agent.')
-        'use_entity_embed': False,
+        'agent_mode': 1,
+        'bert_state_mode': 0,  #  'Which model to use: "lstm_mlp", "bert_mlp" or "random"')
+        'state_size': 1,    # 'Size of the context encoding (LSTM state or BERT reduced state representation)')
+        'rel_emb_size': 1,   #'Size of the relation embeddings.')
+        'mlp_size': 0,   #'Size of the hidden MLP of the Agent.')
+        'ent_emb': 1,
         # 'entity_embed_size', default=5, type=int)
 
-        'train_times': 20,
+        'train_unrolls': 3,
         # 'Number of rollouts of the same episode (triple).')
         # 'test_times', default=100,   #'Beam search size for one episode (triple) ')
+
         "train_batch": 200,  # 'Number of training iterations.')
         'max_out': 200,  # 'Maximal number of actions stored for one state.')
         'max_step_length': 3,
@@ -214,29 +195,40 @@ current_best_params = [
         'random_seed': 1,
 
         # Trainable Bert
-        'bert_training':
-            {
-                'train_layers': [5],
-                'bert_rate': 10e-5,
-                'bert_lr': 10e-8,
-            }
+        'bert_training': 1,
+        'bert_loss_part': 1,
+        'bert_lr': 2,
+        'train_layers': 0,
+        'bert_state_mode': 0
     }
 ]
 
+print(os.listdir(space["bert_path"]))
 algo = HyperOptSearch(
-    space, max_concurrent=1 if args.smoke_test else 4, metric="hits@top",
-    #points_to_evaluate=current_best_params
+    space, metric="hits@top",
+    max_concurrent=100,
+    points_to_evaluate=current_best_params
 )
+
+scheduler = AsyncHyperBandScheduler(  # MedianStoppingRule( #HyperBandScheduler( 
+        time_attr="training_iteration",
+        metric="hits@top",
+        #grace_period=100,
+        mode="max")
+
 
 analysis = run(
     Trainer,
     name="hyperband_test",
-    num_samples=20,
+    num_samples=args.n,
     resources_per_trial={"gpu": 1},
-    stop={"training_iteration": 1 if args.smoke_test else 99999},
+    stop={"training_iteration": 5 if args.smoke_test else 500},
     search_alg=algo,
-    scheduler=hyperband,
-    fail_fast=True)
+    scheduler=scheduler,
+    raise_on_failed_trial=False
+    #fail_fast=True
+    )
 
-print(analysis.get_best_config(metric="mean_accuracy"))
-print(analysis.trials)
+print(analysis.get_best_config(metric="hits@top"))
+print(analysis.dataframe(metric="hits@top", mode="max"))
+print(analysis.get_best_trial("hits@top"))

@@ -199,7 +199,7 @@ class Trainer(Trainable):
         # with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
         #     f.write("reward: " + str(rewards.mean()) + "\n")
 
-        return {'hits@top': rewards.type(torch.float32).mean()}
+        return {'hits@top': rewards.type(torch.float32).mean().item()}
 
 
     def test(self, data='valid', short=False):
@@ -388,13 +388,15 @@ class Trainer(Trainable):
                 rank = "{:3d}".format(ranks[qid]+1)
                 f.write("\t".join((q, path, rank)) + "\n")
 
-    def _save(self, checkpoint_path=None):
-        if checkpoint_path is None:
-            checkpoint_path = os.path.join(self.option.this_expsdir, "model.pkt")
+    def _save(self, checkpoint_dir=None):
+        if checkpoint_dir is None:
+            checkpoint_dir = self.option.this_expsdir
+        checkpoint_path = os.path.join(checkpoint_dir, "model.pkt")
         # if not os.path.exists(dir_path):
         #     os.makedirs(dir_path)
         self.agent.cpu()
         torch.save(self.agent.my_state_dict(), checkpoint_path)
+        return checkpoint_path
 
     def _restore(self, checkpoint_path=None):
         if checkpoint_path is None:

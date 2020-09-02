@@ -114,7 +114,7 @@ class Agent(nn.Module):
     def make_bert_trainable(self, has_grad):
         self.path_scoring_model.train(has_grad == [])
         for name, par in self.path_scoring_model.named_parameters():
-            if any([f'layer.{id}' in name for id in self.option.has_grad]):
+            if any([f'layer.{idx}' in name for idx in self.option.train_layers]):
                 par.requires_grad_(True)
             else:
                 par.requires_grad_(False)
@@ -297,13 +297,13 @@ class Agent(nn.Module):
         loss, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
 
         labels = sequences[:,0].numpy().reshape(-1)
-        prediction_scores = output[:, 1].cpu()
+        prediction_scores = output[:, 1]#.cpu()
         prediction_prob = prediction_scores.softmax(dim=-1)  #.detach().numpy()  # B x n_actions
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
         if not test:
             # for unfiltered rank == 1 uncomment:
-            rewards_prob = rewards_prob > torch.tensor(np.percentile(prediction_prob.detach().numpy(), q=99.9, axis=-1))
+            #rewards_prob = 1.0 * (rewards_prob > torch.tensor(np.percentile(prediction_prob.cpu().detach().numpy(), q=99.9, axis=-1)).cuda())
             return loss, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
