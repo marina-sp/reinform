@@ -41,12 +41,10 @@ space = {
     # Agent configuration
     'agent_mode': hp.choice('agent_mode', [
         {
-            'mode': "lstm_mlp",
-            'batch_size': 64
+            'mode': "lstm_mlp"
         },
         {
-            'mode': "bert_mlp",
-            'batch_size': 32
+            'mode': "bert_mlp"
         }
     ]),  # 'Which model to use: "lstm_mlp", "bert_mlp" or "random"')
 
@@ -58,6 +56,7 @@ space = {
     # 'entity_embed_size', default=5, type=int)
 
     'train_times': hp.choice('train_unrolls', [1,5,10,20]),   #'Number of rollouts of the same episode (triple).')
+
     'test_times': 100,   ##'Beam search size for one episode (triple) ')
     "train_batch": 1000,   #'Number of training iterations.')
     'max_out': 200,   #'Maximal number of actions stored for one state.')
@@ -72,7 +71,7 @@ space = {
     # Learning configuration
     'learning_rate': hp.choice('lr', [0.1, 0.01, 0.001, 0.0001, 0.00001]),
     'batch_size': 128,   #'Batch size used for training.')
-    'test_batch_size': 64, ##'Batch size used during evaluation.')
+    'test_batch_size': 64, ##'Batch size used during evaluat
 
     # Decay of the beta: the entropy regularization factor
     'decay_weight':0.02,
@@ -91,14 +90,17 @@ space = {
         {
             'train_layers': [],
             'bert_rate': 1,
-            'bert_lr': 0
+            'bert_lr': 0,
+            'batch_size': 128
         },
         {
             'train_layers': hp.choice('train_layers', [
                 [5], [5,4], [5,4,3], [5,4,3,2], [5,4,3,2,1], [5,4,3,2,1,0]
             ]),
             'bert_rate': hp.choice('bert_loss_part', [10e-3, 10e-5, 10e-8, 10e-10]),
-            'bert_lr': hp.choice('bert_lr', [10e-3, 10e-5, 10e-8, 10e-10])
+            'bert_lr': hp.choice('bert_lr', [10e-3, 10e-5, 10e-8, 10e-10]),
+            'batch_size': 16
+
         }
     ])
 }
@@ -213,7 +215,7 @@ algo = HyperOptSearch(
 scheduler = AsyncHyperBandScheduler(  # MedianStoppingRule( #HyperBandScheduler( 
         time_attr="training_iteration",
         metric="hits@top",
-        #grace_period=100,
+        grace_period=10,
         mode="max")
 
 
@@ -222,7 +224,7 @@ analysis = run(
     name="hyperband_test",
     num_samples=args.n,
     resources_per_trial={"gpu": 1},
-    stop={"training_iteration": 5 if args.smoke_test else 500},
+    stop={"training_iteration": 2 if args.smoke_test else 50},
     search_alg=algo,
     scheduler=scheduler,
     raise_on_failed_trial=False

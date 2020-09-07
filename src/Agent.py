@@ -309,7 +309,7 @@ class Agent(nn.Module):
         rewards_rank = np.empty_like(labels).astype(np.float)
         ranks = np.empty_like(labels).astype(np.int)
 
-        ranked_token_ids = torch.argsort(prediction_scores, descending=True, dim=-1).numpy()
+        ranked_token_ids = torch.argsort(prediction_scores.detach().cpu(), descending=True, dim=-1).numpy()
 
         for i, label in enumerate(labels.tolist()):
             ranked = ranked_token_ids[i].tolist()

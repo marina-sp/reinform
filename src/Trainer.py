@@ -101,105 +101,112 @@ class Trainer(Trainable):
 
 
     def _train(self):
-        start_entities, queries, answers, all_correct = next(self.batch_iterator)
-        # start = time.time()
-        # if self.batch_counter >= self.option.train_batch:
-        #     break
-        # else:
-        #     self.batch_counter += 1
+        if torch.cuda.is_available():
+            self.option.use_cuda = True
+            self.agent.cuda()
+        self.agent.train()
 
-        self.current_decay_count += 1
-        if self.current_decay_count == self.option.decay_batch:
-            self.decaying_beta *= self.option.decay_rate
-            self.current_decay_count.fill_(0)
+        for i in range(10):
+            start_entities, queries, answers, all_correct = next(self.batch_iterator)
+            # start = time.time()
+            # if self.batch_counter >= self.option.train_batch:
+            #     break
+            # else:
+            #     self.batch_counter += 1
 
-        batch_size = start_entities.shape[0]
-        self.agent.zero_state(batch_size)
+            self.current_decay_count += 1
+            if self.current_decay_count == self.option.decay_batch:
+                self.decaying_beta *= self.option.decay_rate
+                self.current_decay_count.fill_(0)
 
-        if self.option.reward == "answer":
-            prev_relation = self.agent.get_dummy_start_relation(batch_size)
-            sequences = torch.empty((batch_size, 0), dtype=queries.dtype)
-        else:
-            prev_relation = queries
-            sequences = torch.stack((answers, queries, start_entities), -1)
+            batch_size = start_entities.shape[0]
+            self.agent.zero_state(batch_size)
 
-        current_entities = start_entities
-        queries_cpu = queries.detach().clone()
-        if self.option.use_cuda:
-            prev_relation = prev_relation.cuda()
-            queries = queries.cuda()
-            current_entities = current_entities.cuda()
-
-        all_loss = []
-        all_logits = []
-        all_action_id = []
-
-        for step in range(self.option.max_step_length):
-            actions_id = self.train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
-                                             answers, all_correct, step)
+            if self.option.reward == "answer":
+                prev_relation = self.agent.get_dummy_start_relation(batch_size)
+                sequences = torch.empty((batch_size, 0), dtype=queries.dtype)
+            else:
+                prev_relation = queries
+                sequences = torch.stack((answers, queries, start_entities), -1)
+    
+            current_entities = start_entities
+            queries_cpu = queries.detach().clone()
             if self.option.use_cuda:
-                actions_id = actions_id.cuda()
-            loss, logits, action_id, next_entities, chosen_relation= \
-                self.agent.step(prev_relation, current_entities, actions_id, queries, sequences,
-                                self.option.mode == "random")
-
-            sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
-            sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
-
-            all_loss.append(loss)
-            all_logits.append(logits)
-            all_action_id.append(action_id)
-            prev_relation = chosen_relation
-            current_entities = next_entities
-
-        if self.option.reward == "answer":
-            rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
-        elif self.option.reward == "context":
-            bert_loss, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
-
-        # cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
-        base_value = self.baseline.get_baseline_value(
-            batch=(start_entities, start_entities, queries, answers, all_correct),
-            graph=self.train_graph)
-
-        # if base_value.shape[0] != 1:  # todo: check double discounting
-        #     base_value = self.calc_cum_discounted_reward(base_value)
-        # final_reward = cum_discounted_reward - base_value
-
-        # apply baseline deduction
-        base_rewards = rewards - base_value
-        cum_discounted_reward = self.calc_cum_discounted_reward(base_rewards).detach()
-        reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
-        #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
-
-        reinforce_loss += self.option.bert_rate * bert_loss
-
-        if np.isnan(reinforce_loss.detach().cpu().numpy()):
-            raise ArithmeticError("Error in computing loss")
-
-        self.baseline.update(torch.mean(base_rewards))
-        self.optimizer.zero_grad()
-        reinforce_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
-        self.optimizer.step()
-
-        # rewards logging
-        # reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
-        # reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
-        # reward_reshape = (reward_reshape > 0)
-        # num_ep_correct = np.sum(reward_reshape)
-        # avg_ep_correct = num_ep_correct / self.option.batch_size
-
-        # print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
-        # print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
-        # print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
-        # log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
-        #          .format(batch_counter, print_rewards, norm_reward.mean(), num_ep_correct, avg_ep_correct,
-        #                   print_act_loss, print_loss))
-        # with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-        #     f.write("reward: " + str(rewards.mean()) + "\n")
-
-        return {'hits@top': rewards.type(torch.float32).mean().item()}
+                prev_relation = prev_relation.cuda()
+                queries = queries.cuda()
+                current_entities = current_entities.cuda()
+    
+            all_loss = []
+            all_logits = []
+            all_action_id = []
+    
+            for step in range(self.option.max_step_length):
+                actions_id = self.train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
+                                                 answers, all_correct, step)
+                if self.option.use_cuda:
+                    actions_id = actions_id.cuda()
+                loss, logits, action_id, next_entities, chosen_relation= \
+                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences,
+                                    self.option.mode == "random")
+    
+                sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
+                sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
+    
+                all_loss.append(loss)
+                all_logits.append(logits)
+                all_action_id.append(action_id)
+                prev_relation = chosen_relation
+                current_entities = next_entities
+    
+            if self.option.reward == "answer":
+                rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
+            elif self.option.reward == "context":
+                bert_loss, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
+    
+            # cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
+            base_value = self.baseline.get_baseline_value(
+                batch=(start_entities, start_entities, queries, answers, all_correct),
+                graph=self.train_graph)
+    
+            # if base_value.shape[0] != 1:  # todo: check double discounting
+            #     base_value = self.calc_cum_discounted_reward(base_value)
+            # final_reward = cum_discounted_reward - base_value
+    
+            # apply baseline deduction
+            base_rewards = rewards - base_value
+            cum_discounted_reward = self.calc_cum_discounted_reward(base_rewards).detach()
+            reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
+            #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
+    
+            reinforce_loss += self.option.bert_rate * bert_loss
+    
+            if np.isnan(reinforce_loss.detach().cpu().numpy()):
+                raise ArithmeticError("Error in computing loss")
+    
+            self.baseline.update(torch.mean(base_rewards))
+            self.optimizer.zero_grad()
+            reinforce_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
+            self.optimizer.step()
+    
+            # rewards logging
+            # reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
+            # reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
+            # reward_reshape = (reward_reshape > 0)
+            # num_ep_correct = np.sum(reward_reshape)
+            # avg_ep_correct = num_ep_correct / self.option.batch_size
+    
+            # print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
+            # print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
+            # print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
+            # log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
+            #          .format(batch_counter, print_rewards, norm_reward.mean(), num_ep_correct, avg_ep_correct,
+            #                   print_act_loss, print_loss))
+            # with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
+            #     f.write("reward: " + str(rewards.mean()) + "\n")
+            
+            report_score = self.test('train', short=10)
+            return {'hits@top': report_score}
 
 
     def test(self, data='valid', short=False):
@@ -320,7 +327,8 @@ class Trainer(Trainable):
                             ranks.append(self.option.num_entity)
                     ranks_np = np.array(ranks)
 
-                self.decode_and_save_paths(triples, sequences, ranks_np, data)
+                if short is not None:
+                    self.decode_and_save_paths(triples, sequences, ranks_np, data)
 
                 metrics[:, 2] += self.get_metrics(ranks_np)
 
@@ -345,13 +353,15 @@ class Trainer(Trainable):
             log.info(("all_final_reward_20", metrics[0]))
             log.info(("all_r_rank", metrics[5]))
 
-            with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
-                f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
-                f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
-                f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
-                f.write("all_final_reward_10: " + str(metrics[1]) + "\n")
-                f.write("all_final_reward_20: " + str(metrics[0]) + "\n")
-                f.write("all_r_rank: " + str(metrics[5]) + "\n")
+            #with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
+            #    f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
+            #    f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
+            #    f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
+            #    f.write("all_final_reward_10: " + str(metrics[1]) + "\n")
+            #    f.write("all_final_reward_20: " + str(metrics[0]) + "\n")
+            #    f.write("all_r_rank: " + str(metrics[5]) + "\n")
+
+            return metrics[5, 2]
 
     def get_metrics(self, ranks_np):
         metrics = np.zeros(6)
