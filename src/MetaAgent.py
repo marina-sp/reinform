@@ -62,6 +62,10 @@ class MetaAgent(Agent):
         self.advisor.zero_state(dim)
         super().zero_state(dim)
 
+    def update_search_states(self, *params):
+        self.advisor.update_search_states(*params)
+        return self.update_search_states(*params)
+
     # def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
     #               sequences, step, random):
     #
@@ -71,64 +75,6 @@ class MetaAgent(Agent):
     #     chosen_relation, chosen_entities, log_current_prob, sequences = self.test_search(
     #         log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size,
     #          sequences, step)
-    #
-    #     return chosen_relation, chosen_entities, log_current_prob, sequences
-    #
-    # def test_search(self, log_current_prob, log_action_prob, out_relations_id, out_entities_id,
-    #                 batch_size, sequences, step):
-    #     ## tf: trainer beam search ##
-    #
-    #     ## CAREFUL: t=torch.arange(6); t.view(3,2) does not equal t.view(2,3).t()
-    #     # be aware of the flattened order of the elements
-    #
-    #     # shape: BATCH*TIMES --> BATCH x TIMES*MAX_OUT
-    #     # linear order: BATCH(TIMES(MAX_OUT)))
-    #
-    #     log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
-    #     log_action_prob = log_action_prob.view(batch_size, -1)
-    #     log_trail_prob = torch.add(log_action_prob, log_current_prob)
-    #     if (step != self.option.max_step_length -1) or self.option.reward == "answer":
-    #         top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
-    #         # action ids in range 0, TIMES*MAX_OUT
-    #     else:
-    #         # for the last step of the context generation: take only the most probable path
-    #         top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
-    #
-    #     if self.option.mode == "lstm_mlp":
-    #         new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
-    #         # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
-    #         new_state_0 = self.state[0].view(batch_size, -1, self.option.state_embed_size)
-    #         new_state_1 = self.state[1].unsqueeze(1)  #.repeat(1, self.option.max_out, 1)
-    #         new_state_1 = self.state[1].view(batch_size, -1, self.option.state_embed_size)
-    #
-    #         # select history according to beam search
-    #         top_k_action_id_state = top_k_action_id.unsqueeze(2).repeat(1, 1,
-    #                                                                     self.option.state_embed_size) // self.option.max_out
-    #         self.state = \
-    #             (torch.gather(new_state_0, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size),
-    #              torch.gather(new_state_1, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size))
-    #
-    #     # B*TIMES x MAX_OUT --> B x TIMES*MAX_OUT
-    #     out_relations_id = out_relations_id.view(batch_size, -1)
-    #     out_entities_id = out_entities_id.view(batch_size, -1)
-    #
-    #     # select action according to beam search
-    #     chosen_relation = torch.gather(out_relations_id, dim=1, index=top_k_action_id).view(-1)
-    #     chosen_entities = torch.gather(out_entities_id, dim=1, index=top_k_action_id).view(-1)
-    #     log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
-    #     # assert (log_current_prob == top_k_log_prob.view(-1)).all()
-    #
-    #     # select relevant sequences according to beam search
-    #     seq_len = sequences.shape[-1]
-    #     top_k_action_id_seq = top_k_action_id.unsqueeze(2).repeat(1, 1, seq_len) // self.option.max_out
-    #     # B * times x seq_len --> B x times x seq_len
-    #     sequences = sequences.unsqueeze(1).view(batch_size, -1, seq_len)
-    #
-    #     sequences = torch.gather(sequences, dim=1, index=top_k_action_id_seq).view(-1, seq_len)
-    #
-    #     # append new elements to the sequences
-    #     sequences = torch.cat((sequences, chosen_relation.view(-1, 1), chosen_entities.view(-1, 1)), dim=-1)
-    #     #sequences = sequences.view(batch_size, -1, sequences.shape[-1])
     #
     #     return chosen_relation, chosen_entities, log_current_prob, sequences
     #

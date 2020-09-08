@@ -207,14 +207,15 @@ class Agent(nn.Module):
         log_action_prob, out_relations_id, out_entities_id = self.get_action_dist(
             prev_relation, current_entity, actions_id, queries, sequences, random)
 
-        chosen_relation, chosen_entities, log_current_prob, sequences = self.test_search(
-            log_current_prob, log_action_prob, out_relations_id, out_entities_id, batch_size,
-             sequences, step)
+        top_k_action_id, log_current_prob = self.test_search(log_current_prob, log_action_prob, batch_size, step)
+        chosen_relation, chosen_entities, sequences = self.update_search_states(
+            top_k_action_id,
+            out_relations_id, out_entities_id, sequences, batch_size)
 
         return chosen_relation, chosen_entities, log_current_prob, sequences
 
-    def test_search(self, log_current_prob, log_action_prob, out_relations_id, out_entities_id,
-                    batch_size, sequences, step):
+    def test_search(self, log_current_prob, log_action_prob,
+                    batch_size, step):
         ## tf: trainer beam search ##
 
         ## CAREFUL: t=torch.arange(6); t.view(3,2) does not equal t.view(2,3).t()
@@ -232,7 +233,10 @@ class Agent(nn.Module):
         else:
             # for the last step of the context generation: take only the most probable path
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, 1)
+        log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
+        return top_k_action_id, log_current_prob
 
+    def update_search_states(self, top_k_action_id, out_relations_id, out_entities_id, sequences, batch_size):
         if self.option.mode == "lstm_mlp":
             new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
             # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
@@ -254,7 +258,6 @@ class Agent(nn.Module):
         # select action according to beam search
         chosen_relation = torch.gather(out_relations_id, dim=1, index=top_k_action_id).view(-1)
         chosen_entities = torch.gather(out_entities_id, dim=1, index=top_k_action_id).view(-1)
-        log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
         # assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
         # select relevant sequences according to beam search
@@ -269,7 +272,7 @@ class Agent(nn.Module):
         sequences = torch.cat((sequences, chosen_relation.view(-1, 1), chosen_entities.view(-1, 1)), dim=-1)
         #sequences = sequences.view(batch_size, -1, sequences.shape[-1])
 
-        return chosen_relation, chosen_entities, log_current_prob, sequences
+        return chosen_relation, chosen_entities, sequences
 
     def get_dummy_start_relation(self, batch_size):
         dummy_start_item = self.data_loader.relation2num['START']
