@@ -85,7 +85,7 @@ class Agent(nn.Module):
             else:
                 self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
 
-            self.make_bert_trainable(True)
+            self.make_bert_trainable(self.option.train_layers)
             ## replace the upper bert loading with this dummy function for debugging
             # self.path_scoring_model = self.fct
 
@@ -114,7 +114,7 @@ class Agent(nn.Module):
     def make_bert_trainable(self, has_grad):
         self.path_scoring_model.train(has_grad == [])
         for name, par in self.path_scoring_model.named_parameters():
-            if any([f'layer.{id}' in name for id in self.option.has_grad]):
+            if any([f'layer.{id}' in name for id in has_grad]):
                 par.requires_grad_(True)
             else:
                 par.requires_grad_(False)
