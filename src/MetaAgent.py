@@ -10,11 +10,11 @@ from Agent import Policy_step, Policy_mlp, Bert_policy, Agent
 
 class MetaAgent(Agent):
     def __init__(self, option, data_loader, graph=None):
-        super(MetaAgent, self).__init__()
+        super(MetaAgent, self).__init__(option, data_loader)
 
         # add
-        self.policy_mlp.mlp_l1 = nn.Linear(self.option.state_embed_size + self.option.action_embed_size + 1,
-            self.hidden_size, bias=True)
+        self.policy_mlp.mlp_l2 = nn.Linear(self.option.mlp_hidden_size, 
+                self.option.action_embed_size +1, bias=True)
 
         # replace with dumped option reading
         option2 = copy.deepcopy(option)
@@ -31,8 +31,10 @@ class MetaAgent(Agent):
              'use_entity_embed': False,
              'use_inverse': False}
         )
-        self.advisor = Agent(option2)
+        self.advisor = Agent(option2, data_loader)
         self.advisor.eval()
+        for par in self.advisor.parameters():
+            par.requires_grad_(False)
 
     def action_encoder(self, rel_ids, ent_ids, meta=True):
         if self.option.use_entity_embed:
@@ -40,10 +42,11 @@ class MetaAgent(Agent):
             action = torch.cat(parts, dim=-1)
         else:
             action = self.item_embedding(rel_ids)
-        if meta:
+        if meta and self.advisor_logits is not None:
             print(self.advisor_logits.shape)
             action = torch.cat([action, self.advisor_logits.unsqueeze(-1)], dim=-1)
             print(action.shape)
+            self.advisor_logits = None
         return action
 
     def get_decision_input(self, queries, current_state, current_entity):
@@ -54,6 +57,10 @@ class MetaAgent(Agent):
     def get_action_dist(self, *params):
         self.advisor_logits, _, _ = self.advisor.get_action_dist(*params)
         return super().get_action_dist(*params)
+    
+    def zero_state(self, dim):
+        self.advisor.zero_state(dim)
+        super().zero_state(dim)
 
     # def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
     #               sequences, step, random):

@@ -112,9 +112,9 @@ class Agent(nn.Module):
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
 
     def make_bert_trainable(self, has_grad):
-        self.path_scoring_model.train(has_grad == [])
+        self.path_scoring_model.train(has_grad)
         for name, par in self.path_scoring_model.named_parameters():
-            if any([f'layer.{id}' in name for id in self.option.has_grad]):
+            if any([f'layer.{id}' in name for id in self.option.train_layers]):
                 par.requires_grad_(True)
             else:
                 par.requires_grad_(False)
@@ -155,8 +155,8 @@ class Agent(nn.Module):
             # 1. one step of rnn
             current_state, self.state = self.policy_step(prev_action_embedding, self.state)
 
-            state_query = self.get_decision_input(current_state,
-                                                  prev_relation, current_entity, actions_id, queries)
+            state_query = self.get_decision_input(queries,  current_state,
+                                                  current_entity)
 
             # MLP for policy#
             output = self.policy_mlp(state_query)  # B x 1 x action_emb
