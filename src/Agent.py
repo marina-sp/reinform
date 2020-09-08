@@ -153,11 +153,10 @@ class Agent(nn.Module):
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
 
             # 1. one step of rnn
-            output, self.state = self.policy_step(prev_action_embedding, self.state)
+            current_state, self.state = self.policy_step(prev_action_embedding, self.state)
 
-            current_state = output.to(queries.device)
-            ent_q = self.action_encoder(queries, current_entity)
-            state_query = torch.cat([current_state, ent_q], -1)
+            state_query = self.get_decision_input(current_state,
+                                                  prev_relation, current_entity, actions_id, queries)
 
             # MLP for policy#
             output = self.policy_mlp(state_query)  # B x 1 x action_emb
@@ -171,6 +170,11 @@ class Agent(nn.Module):
         logits = scores.log_softmax(dim=-1)  # B x n_actions
 
         return logits, out_relations_id, out_entities_id
+
+    def get_decision_input(self, queries, current_state, current_entity):
+        current_state = current_state.to(queries.device)
+        ent_q = self.action_encoder(queries, current_entity)
+        return torch.cat([current_state, ent_q], -1)
 
     def step(self, *params):
         logits, out_relations_id, out_entities_id = self.get_action_dist(*params)
