@@ -6,7 +6,9 @@ import logging as log
 import numpy as np
 from Data import Data_loader
 from Trainer import Trainer
-from Agent import Agent
+#from Agent import Agent
+from MetaAgent import MetaAgent as Agent
+
 
 class Option:
     def __init__(self, d):
