@@ -56,13 +56,14 @@ class Bert_policy(nn.Module):
         if not self.option.use_cuda:
             embs = embs.cpu()
         # print(embs.shape, input.shape)
+        embs = embs.detach()
         if self.option.bert_state_mode == "avg_token":
             new_state = torch.tanh(self.to_state(embs[:, 1:-1, :].mean(1)))
         elif self.option.bert_state_mode == "avg_all":
             new_state = torch.tanh(self.to_state(embs.mean(1)))
         elif self.option.bert_state_mode == "sep":
             new_state = torch.tanh(self.to_state(embs[:, -1, :]))
-        return new_state, None
+        return new_state, torch.tensor(0.0)
 
 
 class Agent(nn.Module):
@@ -70,6 +71,7 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         self.option = option
         self.data_loader = data_loader
+        self.dropout = torch.nn.Dropout(0.2)
 
         # use joint id space from Transformer
         self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
@@ -114,10 +116,13 @@ class Agent(nn.Module):
     def make_bert_trainable(self, has_grad):
         self.path_scoring_model.train(has_grad)
         for name, par in self.path_scoring_model.named_parameters():
-            if any([f'layer.{id}' in name for id in self.option.train_layers]):
+            if any([f'layer.{id}' in name for id in self.option.train_layers]) or 'cls' in name:
                 par.requires_grad_(True)
+                print(f"Layer {name} - activate training")
             else:
                 par.requires_grad_(False)
+                print(name) 
+        print(self.path_scoring_model)
 
     def fct(self, seq):
         # only neccessary for testing purposes, simulates random bert output
@@ -146,6 +151,7 @@ class Agent(nn.Module):
             prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
         elif self.option.mode.endswith("mlp"):
             action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb
+            action = self.dropout(action)
 
             if self.option.mode == "bert_mlp":
                 prev_action_embedding = sequences
@@ -154,12 +160,13 @@ class Agent(nn.Module):
 
             # 1. one step of rnn
             current_state, self.state = self.policy_step(prev_action_embedding, self.state)
-
+            current_state = self.dropout(current_state)
             state_query = self.get_decision_input(queries,  current_state,
                                                   current_entity)
 
             # MLP for policy#
-            output = self.policy_mlp(state_query)  # B x 1 x action_emb
+            output = self.policy_mlp(state_query)
+            output = self.dropout(output)# B x 1 x action_emb
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
 
         # Masking PAD actions

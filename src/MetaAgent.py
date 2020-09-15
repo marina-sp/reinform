@@ -32,6 +32,13 @@ class MetaAgent(Agent):
              'use_inverse': False}
         )
         self.advisor = Agent(option2, data_loader)
+        path = "../exps/wn_minerva_item/model.pkt"
+        state_dict = {k:v for k,v in torch.load(path).items()}
+
+        log.info(f"load model from: {path}\n")
+        log.info("loaded parameters: {}\n".format(state_dict.keys()))
+
+        self.advisor.load_state_dict(state_dict, strict=False)
         self.advisor.eval()
         for par in self.advisor.parameters():
             par.requires_grad_(False)
@@ -43,9 +50,11 @@ class MetaAgent(Agent):
         else:
             action = self.item_embedding(rel_ids)
         if meta and self.advisor_logits is not None:
-            print(self.advisor_logits.shape)
-            action = torch.cat([action, self.advisor_logits.unsqueeze(-1)], dim=-1)
-            print(action.shape)
+            #print(self.advisor_logits.shape)
+            #self.advisor_logits = torch.zeros_like(self.advisor_logits).to(self.advisor_logits.device)
+            action = torch.cat([action, self.advisor_logits.exp().unsqueeze(-1)], dim=-1)
+            #print(self.advisor_logits.requires_grad, action.requires_grad)
+            #print(action.shape)
             self.advisor_logits = None
         return action
 
@@ -64,7 +73,7 @@ class MetaAgent(Agent):
 
     def update_search_states(self, *params):
         self.advisor.update_search_states(*params)
-        return self.update_search_states(*params)
+        return super().update_search_states(*params)
 
     # def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
     #               sequences, step, random):

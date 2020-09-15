@@ -17,9 +17,11 @@ class Trainer():
                 {'params': self.agent.non_bert_parameters},
                 {'params': self.agent.path_scoring_model.parameters(), 'lr': self.option.bert_lr}
             ],
-            lr=self.option.learning_rate)
+            lr=self.option.learning_rate)#, weight_decay=0.0001)
         self.positive_reward = torch.tensor(1.)
         self.negative_reward = torch.tensor(0.)
+        #self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[20,1000], gamma=0.5)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.5, min_lr=1e-8, verbose=True, patience=50)
 
         if option.baseline == "random" and option.reward == "context":
             self.baseline = RandomBaseline(option, agent)
@@ -160,7 +162,7 @@ class Trainer():
             reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
             #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
 
-            reinforce_loss += self.option.bert_rate * bert_loss
+            reinforce_loss += self.option.bert_rate * bert_loss * base_rewards.detach().mean().clamp_min(0)
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
@@ -175,17 +177,17 @@ class Trainer():
             print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
             print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
             log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
-                     .format(batch_counter, print_rewards, norm_reward.mean(), num_ep_correct, avg_ep_correct,
+                     .format(batch_counter, print_rewards, base_rewards.mean(), num_ep_correct, avg_ep_correct,
                               print_act_loss, print_loss))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
             
-            self.baseline.update(torch.mean(base_rewards))
+            self.baseline.update(torch.mean(rewards))
             self.optimizer.zero_grad()
             reinforce_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
             self.optimizer.step()
-
+            #self.scheduler.step(rewards.mean())
 
     def test(self, data='valid', short=False):
         with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "w", encoding='UTF-8') as f:
