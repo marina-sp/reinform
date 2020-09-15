@@ -172,12 +172,13 @@ class Trainer():
             reward_reshape = (reward_reshape > 0)
             num_ep_correct = np.sum(reward_reshape)
             avg_ep_correct = num_ep_correct / self.option.batch_size
+            valid_mrr = self.test('train', 10)
 
             print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
             print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
             print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
-            log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\tnum ep correct: {:3d}\tavg ep correct: {:3.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
-                     .format(batch_counter, print_rewards, base_rewards.mean(), num_ep_correct, avg_ep_correct,
+            log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\t valid mrr: {:2.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
+                     .format(batch_counter, print_rewards, base_rewards.mean(), valid_mrr,
                               print_act_loss, print_loss))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write("reward: " + str(rewards.mean()) + "\n")
@@ -188,6 +189,8 @@ class Trainer():
             torch.nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.option.grad_clip_norm, norm_type=2)
             self.optimizer.step()
             #self.scheduler.step(rewards.mean())
+
+
 
     def test(self, data='valid', short=False):
         with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "w", encoding='UTF-8') as f:
@@ -332,13 +335,15 @@ class Trainer():
             log.info(("all_final_reward_20", metrics[0]))
             log.info(("all_r_rank", metrics[5]))
 
-            with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
-                f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
-                f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
-                f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
-                f.write("all_final_reward_10: " + str(metrics[1]) + "\n")
-                f.write("all_final_reward_20: " + str(metrics[0]) + "\n")
-                f.write("all_r_rank: " + str(metrics[5]) + "\n")
+            # with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
+            #     f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
+            #     f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
+            #     f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
+            #     f.write("all_final_reward_10: " + str(metrics[1]) + "\n")
+            #     f.write("all_final_reward_20: " + str(metrics[0]) + "\n")
+            #     f.write("all_r_rank: " + str(metrics[5]) + "\n")
+
+            return metrics[5][2]
 
     def get_metrics(self, ranks_np):
         metrics = np.zeros(6)
@@ -391,7 +396,7 @@ class Trainer():
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
         state_dict = {k:v for k,v in torch.load(path).items()}  # if not k.startswith('path')}
-
+a
         log.info(f"load model from: {dir_path}\n")
         log.info("loaded parameters: {}\n".format(state_dict.keys()))
 
