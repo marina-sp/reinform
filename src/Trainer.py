@@ -5,13 +5,19 @@ from Graph import Knowledge_graph
 from Environment import Environment
 from Baseline import ReactiveBaseline, RandomBaseline
 import numpy as np
-
+from copy import deepcopy
 
 class Trainer():
     def __init__(self, option, agent, data_loader):
         self.option = option
         self.agent = agent
         self.data_loader = data_loader
+        self.graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
+        self.test_graph = deepcopy(self.graph)
+        self.test_graph.update_all_correct(self.data_loader.get_data('valid'))
+        self.test_graph.update_all_correct(self.data_loader.get_data('test'))
+        self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data('train'), 'test')
+
         # train bert with smaller rate
         self.optimizer = torch.optim.Adam([
                 {'params': self.agent.non_bert_parameters},
@@ -78,9 +84,8 @@ class Trainer():
         if self.option.use_cuda: 
             self.agent.cuda()
 
-        train_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
         train_data = self.data_loader.get_data("valid" if self.option.reward == "context" else "train")
-        environment = Environment(self.option, train_graph, train_data, "train")
+        environment = Environment(self.option, self.graph, train_data, "train")
 
         batch_counter = 0
         current_decay_count = 0
@@ -90,6 +95,8 @@ class Trainer():
         print_act_loss = 0.
 
         for start_entities, queries, answers, all_correct in environment.get_next_batch():
+            self.agent.train()
+
             start = time.time()
             if batch_counter >= self.option.train_batch:
                 break
@@ -123,7 +130,7 @@ class Trainer():
             all_action_id = []
 
             for step in range(self.option.max_step_length):
-                actions_id = train_graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
+                actions_id = self.graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
                                                  answers, all_correct, step)
                 if self.option.use_cuda:
                     actions_id = actions_id.cuda()
@@ -152,7 +159,7 @@ class Trainer():
             # cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()
             base_value = self.baseline.get_baseline_value(
                 batch=(start_entities, start_entities, queries, answers, all_correct),
-                graph=train_graph)
+                graph=self.graph)
             if base_value.shape[0] != 1:
                 base_value = self.calc_cum_discounted_reward(base_value)
             # final_reward = cum_discounted_reward - base_value
@@ -199,31 +206,24 @@ class Trainer():
             f.write("")
         with torch.no_grad():
             self.agent.eval()
-            if self.option.use_cuda:
+            if False and self.option.use_cuda:
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
                     self.agent.path_scoring_model.cuda()
                 torch.cuda.empty_cache()
                 self.option.use_cuda = False
 
-            test_graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
-            test_data = self.data_loader.get_data(data)
-            test_graph.update_all_correct(self.data_loader.get_data('valid'))
-            test_graph.update_all_correct(self.data_loader.get_data('test'))
-
-            environment = Environment(self.option, test_graph, test_data, 'test')
-
-            total_examples = len(test_data) if not short else (self.option.test_batch_size * short)
+            total_examples = len(self.data_loader.data[data]) if not short else (self.option.test_batch_size * short)
 
             # introduce left / right evaluation
             metrics = np.zeros((6,3))
             num_right = len(self.data_loader.data[data])
             first_left_batch, split = num_right // self.option.test_batch_size, num_right % self.option.test_batch_size
-            print(len(test_data), num_right, self.option.test_batch_size, first_left_batch, split)
+            #print(len(test_data), num_right, self.option.test_batch_size, first_left_batch, split)
 
             # _variable + all correct: with rollouts; variable: original data
             for i, (_start_entities, _queries, _answers, start_entities, queries, answers, all_correct)\
-                    in enumerate(environment.get_next_batch(short)):
+                    in enumerate(self.test_env.get_next_batch(short)):
 
                 batch_size = len(start_entities)
                 self.agent.zero_state(batch_size)
@@ -235,24 +235,27 @@ class Trainer():
                     sequences = torch.stack((answers, queries, start_entities), -1)#.reshape(batch_size, -1, 3)
 
                 current_entities = start_entities
-                log_current_prob = torch.zeros(start_entities.shape[0])
+                log_current_prob = torch.zeros(start_entities.shape[0]).cuda()
+                sequences=sequences.cuda()
+                
                 
                 for step in range(self.option.max_step_length):
                     if step == 0:
-                        actions_id = test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
+                        actions_id = self.test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
                                                         step)
+                        actions_id = actions_id.cuda()
                         chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
-                            prev_relation, current_entities, actions_id,
-                            log_current_prob, queries, batch_size, sequences,
+                            prev_relation.cuda(), current_entities.cuda(), actions_id,
+                            log_current_prob, queries.cuda(), batch_size, sequences,
                             step,
                             self.option.mode == "random")
 
                     else:
-                        actions_id = test_graph.get_out(current_entities, _start_entities, _queries, _answers,
+                        actions_id = self.test_graph.get_out(current_entities, _start_entities, _queries, _answers,
                                                         all_correct, step)
                         chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
-                            prev_relation, current_entities, actions_id,
-                            log_current_prob, _queries, batch_size, sequences,
+                            prev_relation.cuda(), current_entities.cuda(), actions_id.cuda(),
+                            log_current_prob, _queries.cuda(), batch_size, sequences,
                             step,
                             self.option.mode == "random")
 
@@ -283,7 +286,7 @@ class Trainer():
                 if self.option.metric == "context":
                     # - pad NO_OP
                     _, _, ranks_np = self.agent.get_context_reward(
-                        sequences, all_correct[::self.option.test_times], test=True)
+                        sequences.cpu(), all_correct[::self.option.test_times], test=True)
 
                 elif self.option.metric == "answer":
                     rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
@@ -310,7 +313,7 @@ class Trainer():
                             ranks.append(self.option.num_entity)
                     ranks_np = np.array(ranks)
 
-                self.decode_and_save_paths(triples, sequences, ranks_np, data)
+                #self.decode_and_save_paths(triples, sequences, ranks_np, data)
 
                 metrics[:, 2] += self.get_metrics(ranks_np)
 
@@ -328,12 +331,12 @@ class Trainer():
             metrics[:, 2:] /= total_examples
             metrics[:, :2] /= num_right
 
-            log.info(("all_final_reward_1", metrics[4]))
-            log.info(("all_final_reward_3", metrics[3]))
-            log.info(("all_final_reward_5", metrics[2]))
-            log.info(("all_final_reward_10", metrics[1]))
-            log.info(("all_final_reward_20", metrics[0]))
-            log.info(("all_r_rank", metrics[5]))
+            #log.info(("all_final_reward_1", metrics[4]))
+            #log.info(("all_final_reward_3", metrics[3]))
+            #log.info(("all_final_reward_5", metrics[2]))
+            #log.info(("all_final_reward_10", metrics[1]))
+            #log.info(("all_final_reward_20", metrics[0]))
+            #log.info(("all_r_rank", metrics[5]))
 
             # with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
             #     f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
@@ -396,7 +399,7 @@ class Trainer():
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, "model.pkt")
         state_dict = {k:v for k,v in torch.load(path).items()}  # if not k.startswith('path')}
-a
+
         log.info(f"load model from: {dir_path}\n")
         log.info("loaded parameters: {}\n".format(state_dict.keys()))
 

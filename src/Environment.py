@@ -56,9 +56,11 @@ class Environment():
                 self.all_idx = self.random_state.randint(0, len(self.data_array), size=len(self.data_array))
             self.data_array = self.data_array[self.all_idx, :]
 
-        bar = tqdm(total=n_batches)
+        if not n:
+            bar = tqdm(total=n_batches)
         for _ in range(n_batches):
-            bar.update()
+            if not n:
+                bar.update()
             if current_idx == test_data_count:
                 return
             if test_data_count - current_idx > self.option.test_batch_size:
