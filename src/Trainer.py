@@ -16,7 +16,6 @@ class Trainer():
         self.test_graph = deepcopy(self.graph)
         self.test_graph.update_all_correct(self.data_loader.get_data('valid'))
         self.test_graph.update_all_correct(self.data_loader.get_data('test'))
-        self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data('train'), 'test')
 
         # train bert with smaller rate
         self.optimizer = torch.optim.Adam([
@@ -94,7 +93,9 @@ class Trainer():
         print_rewards = 0.
         print_act_loss = 0.
 
-        for start_entities, queries, answers, all_correct in environment.get_next_batch():
+        best_metric = 0.0
+
+        for i, (start_entities, queries, answers, all_correct) in enumerate(environment.get_next_batch()):
             self.agent.train()
 
             start = time.time()
@@ -179,7 +180,11 @@ class Trainer():
             reward_reshape = (reward_reshape > 0)
             num_ep_correct = np.sum(reward_reshape)
             avg_ep_correct = num_ep_correct / self.option.batch_size
-            valid_mrr = self.test('train', 10)
+            if i % self.option.eval_batch == 0:
+                valid_mrr = self.test('train', 10)
+                if valid_mrr > best_metric:
+                    best_metric = valid_mrr
+                    self.save_model('best')
 
             print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
             print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
@@ -206,13 +211,14 @@ class Trainer():
             f.write("")
         with torch.no_grad():
             self.agent.eval()
-            if False and self.option.use_cuda:
+            if not short and self.option.use_cuda:
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
                     self.agent.path_scoring_model.cuda()
                 torch.cuda.empty_cache()
                 self.option.use_cuda = False
 
+            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data), 'test')
             total_examples = len(self.data_loader.data[data]) if not short else (self.option.test_batch_size * short)
 
             # introduce left / right evaluation
@@ -383,21 +389,21 @@ class Trainer():
                 rank = "{:3d}".format(ranks[qid]+1)
                 f.write("\t".join((q, path, rank)) + "\n")
 
-    def save_model(self):
-        path = os.path.join(self.option.this_expsdir, "model.pkt")
+    def save_model(self, name='best'):
+        path = os.path.join(self.option.this_expsdir, f"{name}_model.pkt")
         # if not os.path.exists(dir_path):
         #     os.makedirs(dir_path)
         self.agent.cpu()
         torch.save(self.agent.my_state_dict(), path)
 
-    def load_model(self):
+    def load_model(self, name='best'):
         if self.option.mode == "random":
             return
         if self.option.load_model:
             dir_path = os.path.join(self.option.exps_dir, self.option.load_model)
         else:
             dir_path = self.option.this_expsdir
-        path = os.path.join(dir_path, "model.pkt")
+        path = os.path.join(dir_path, f"{name}_model.pkt")
         state_dict = {k:v for k,v in torch.load(path).items()}  # if not k.startswith('path')}
 
         log.info(f"load model from: {dir_path}\n")

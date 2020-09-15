@@ -75,6 +75,8 @@ def read_options():
     parser.add_argument('--beta', default=0.02, type=float)
 
     parser.add_argument("--grad_clip_norm", default=5, type=int)
+    parser.add_argument("--eval_batch", default=10, type=int,
+                        help="How ofter to validate the model for mrr")
 
     # Randomization control
     parser.add_argument('--random_seed', default=1, type=int)
@@ -143,9 +145,13 @@ def main(option):
         option.load_model = ''
     if option.train_batch != 0:
         trainer.train()
-        trainer.save_model()
+        trainer.save_model('last')
     if option.do_test:
-        #trainer.load_model()
+        print("Eval last model")
+        trainer.test(data='valid')
+        trainer.test(data='test')
+        print("Eval best model")
+        trainer.load_model()
         trainer.test(data='valid')
         trainer.test(data='test')
     else:
