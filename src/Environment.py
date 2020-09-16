@@ -4,14 +4,14 @@ from tqdm import tqdm
 
 
 class Environment():
-    def __init__(self, option, graph, data, mode="train"):
+    def __init__(self, option, graph, data, mode="train", all_idx=None):
         self.mode = mode
         self.graph = graph
         self.option = option
         self.data_array = torch.from_numpy(data)
 
         self.random_state = np.random.RandomState(self.option.random_seed)
-        self.all_idx = None
+        self.all_idx = all_idx
 
 
     def get_next_batch(self, n=None):

@@ -16,6 +16,7 @@ class Trainer():
         self.test_graph = deepcopy(self.graph)
         self.test_graph.update_all_correct(self.data_loader.get_data('valid'))
         self.test_graph.update_all_correct(self.data_loader.get_data('test'))
+        self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data('train')), size=len(self.data_loader.get_data('train')))
 
         # train bert with smaller rate
         self.optimizer = torch.optim.Adam([
@@ -181,10 +182,12 @@ class Trainer():
             num_ep_correct = np.sum(reward_reshape)
             avg_ep_correct = num_ep_correct / self.option.batch_size
             if i % self.option.eval_batch == 0:
-                valid_mrr = self.test('train', 10)
+                valid_mrr = self.test('train', 10, verbose=False)
                 if valid_mrr > best_metric:
                     best_metric = valid_mrr
                     self.save_model('best')
+                    if self.option.use_cuda:
+                        self.agent.cuda()
 
             print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
             print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
@@ -204,22 +207,22 @@ class Trainer():
 
 
 
-    def test(self, data='valid', short=False):
+    def test(self, data='valid', short=False, verbose=True):
         with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "w", encoding='UTF-8') as f:
             f.write(f"Begin test on {data} data\n")
         with open(os.path.join(self.option.this_expsdir, f"{data}_paths.txt"), "w", encoding='UTF-8') as f:
             f.write("")
         with torch.no_grad():
             self.agent.eval()
-            if not short and self.option.use_cuda:
+            if False and not short and self.option.use_cuda:
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
                     self.agent.path_scoring_model.cuda()
                 torch.cuda.empty_cache()
                 self.option.use_cuda = False
 
-            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data), 'test')
-            total_examples = len(self.data_loader.data[data]) if not short else (self.option.test_batch_size * short)
+            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data), 'test', self.valid_idx)
+            total_examples = len(self.data_loader.get_data(data)) if not short else (self.option.test_batch_size * short)
 
             # introduce left / right evaluation
             metrics = np.zeros((6,3))
@@ -337,20 +340,21 @@ class Trainer():
             metrics[:, 2:] /= total_examples
             metrics[:, :2] /= num_right
 
-            #log.info(("all_final_reward_1", metrics[4]))
-            #log.info(("all_final_reward_3", metrics[3]))
-            #log.info(("all_final_reward_5", metrics[2]))
-            #log.info(("all_final_reward_10", metrics[1]))
-            #log.info(("all_final_reward_20", metrics[0]))
-            #log.info(("all_r_rank", metrics[5]))
+            if verbose:
+                log.info(("all_final_reward_1", metrics[4]))
+                log.info(("all_final_reward_3", metrics[3]))
+                log.info(("all_final_reward_5", metrics[2]))
+                log.info(("all_final_reward_10", metrics[1]))
+                log.info(("all_final_reward_20", metrics[0]))
+                log.info(("all_r_rank", metrics[5]))
 
-            # with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
-            #     f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
-            #     f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
-            #     f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
-            #     f.write("all_final_reward_10: " + str(metrics[1]) + "\n")
-            #     f.write("all_final_reward_20: " + str(metrics[0]) + "\n")
-            #     f.write("all_r_rank: " + str(metrics[5]) + "\n")
+                with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
+                    f.write("all_final_reward_1: " + str(metrics[4]) + "\n")
+                    f.write("all_final_reward_3: " + str(metrics[3]) + "\n")
+                    f.write("all_final_reward_5: " + str(metrics[2]) + "\n")
+                    f.write("all_final_reward_10: " + str(metrics[1]) + "\n")
+                    f.write("all_final_reward_20: " + str(metrics[0]) + "\n")
+                    f.write("all_r_rank: " + str(metrics[5]) + "\n")
 
             return metrics[5][2]
 
