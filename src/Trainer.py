@@ -400,11 +400,11 @@ class Trainer():
         self.agent.cpu()
         torch.save(self.agent.my_state_dict(), path)
 
-    def load_model(self, name='best'):
+    def load_model(self, name='best', exp_name=''):
         if self.option.mode == "random":
             return
-        if self.option.load_model:
-            dir_path = os.path.join(self.option.exps_dir, self.option.load_model)
+        if exp_name != '':
+            dir_path = os.path.join(self.option.exps_dir, exp_name)
         else:
             dir_path = self.option.this_expsdir
         path = os.path.join(dir_path, f"{name}_model.pkt")
