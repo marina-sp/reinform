@@ -26,10 +26,10 @@ class Option:
         print(path)
         with open(os.path.join(path, "option.txt"), "r", encoding='UTF-8') as f:
             for line in f.readlines():
-                key, value = line.split(", ")
+                print(line.strip())
+                key, value = line.split(", ", 1)
                 if key not in ["action_embed_size", "random_agent", "tag", "this_expsdir", "use_cuda"]:
-                    args.extend([f"--{key.strip()}", value.strip()])
-                print(line)
+                    args.extend([f"--{key.strip()}", value.strip().replace("False", "")])
         print(args)
         return cls.read_options(args)
 
@@ -52,13 +52,13 @@ class Option:
         parser.add_argument('--mode', default='lstm_mlp', type=str,
                             choices=["lstm_mlp", "bert_mlp", "random"],
                             help='Which model to use: "lstm_mlp", "bert_mlp" or "random"')
-        parser.add_argument("--meta", default=False, type=bool)
+        parser.add_argument("--meta", default=False, type=bool, help="")
 
         parser.add_argument('--state_embed_size', default=200, type=int,
                             help='Size of the context encoding (LSTM state or BERT reduced state representation)')
         parser.add_argument('--relation_embed_size', default=100, type=int, help='Size of the relation embeddings.')
         parser.add_argument('--mlp_hidden_size', default=200, type=int,  help='Size of the hidden MLP of the Agent.')
-        parser.add_argument('--use_entity_embed', default=False, type=bool)
+        parser.add_argument('--use_entity_embed', default=False, type=bool, help="")
         # parser.add_argument('--entity_embed_size', default=5, type=int)
 
         parser.add_argument('--train_times', default=20, type=int, help='Number of rollouts of the same episode (triple).')
@@ -78,6 +78,7 @@ class Option:
         # Learning configuration
         parser.add_argument('--load_model', default='', type=str,
                             help='Path to the directory with the model file "model.pkt"')
+        parser.add_argument('--load_option', default="", type=str)
         parser.add_argument('--learning_rate', default=0.001, type=float)
         parser.add_argument('--batch_size', default=128, type=int, help='Batch size used for training.')
         parser.add_argument('--test_batch_size', default=64, type=int, help='Batch size used during evaluation.')
@@ -96,7 +97,7 @@ class Option:
                             help="How ofter to validate the model for mrr")
 
         # Randomization control
-        parser.add_argument('--random_seed', default=1, type=int)
+        parser.add_argument('--random_seed', default=2020, type=int)
 
         # Modi
         parser.add_argument('--do_test', default=False, type=bool,
@@ -104,7 +105,7 @@ class Option:
                                   If True, performs a full evaluation on dev and test data.')
 
         # Trainable Bert
-        parser.add_argument('--train_layers', default=[], type=list)
+        parser.add_argument('--train_layers', default="", type=str)
         parser.add_argument('--bert_rate', default=10e-8, type=float)
         parser.add_argument('--bert_lr', default=10e-8, type=float)
         parser.add_argument('--bert_state_mode', default="avg_all", type=str, help='["avg_all", "avg_token", "sep"]')
@@ -113,41 +114,46 @@ class Option:
             d = vars(parser.parse_args())
         else:
             d = vars(parser.parse_args(args))
+        print(d['use_entity_embed'])
         option = cls(d)
+        print(option.use_entity_embed)
         return option
 
-    def finilize_option(self):
-        if option.exp_name is None:
-            option.tag = time.strftime("%y-%m-%d-%H-%M")
+    def finalize_option(self):
+        if self.load_model:
+            self.load_option = self.load_model
+        if self.exp_name is None:
+            self.tag = time.strftime("%y-%m-%d-%H-%M")
         else:
-            option.tag = option.exp_name
+            self.tag = self.exp_name
 
         if torch.cuda.is_available():
-            option.use_cuda = True
+            self.use_cuda = True
         else:
-            option.use_cuda = False
+            self.use_cuda = False
 
-        option.this_expsdir = os.path.join(option.exps_dir, option.tag)
-        if not os.path.exists(option.exps_dir):
-            os.makedirs(option.exps_dir)
-        if not os.path.exists(option.this_expsdir):
-            os.makedirs(option.this_expsdir)
+        self.this_expsdir = os.path.join(self.exps_dir, self.tag)
+        if not os.path.exists(self.exps_dir):
+            os.makedirs(self.exps_dir)
+        if not os.path.exists(self.this_expsdir):
+            os.makedirs(self.this_expsdir)
 
-        if not option.bert_path:
-            if option.dataset == "WN18_RR":
-                option.bert_path = "../../mastersthesis/transformers/knowledge_graphs/minerva_wn_a1/"
-            elif option.dataset == "freebase15k_237":
-                option.bert_path = "../../mastersthesis/transformers/knowledge_graphs/output_minevra_a1/"
+        if not self.bert_path:
+            if self.dataset == "WN18_RR":
+                self.bert_path = "../../mastersthesis/transformers/knowledge_graphs/minerva_wn_a1/"
+            elif self.dataset == "freebase15k_237":
+                self.bert_path = "../../mastersthesis/transformers/knowledge_graphs/output_minevra_a1/"
 
-        if option.mode == "random":
-            option.test_times = 1
-            option.train_batch = 0
+        if self.mode == "random":
+            self.test_times = 1
+            self.train_batch = 0
 
-        if option.use_entity_embed is False:
-            option.action_embed_size = option.relation_embed_size
+        if self.use_entity_embed is False:
+            self.action_embed_size = self.relation_embed_size
         else:
-            option.action_embed_size = option.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
-
+            self.action_embed_size = self.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
+        
+        self.train_layers = [int(l) for l in self.train_layers if l in "0123456789"]
 
 def main(option):
     log.basicConfig(level=log.INFO)
@@ -169,9 +175,10 @@ def main(option):
         trainer.test(data='valid')
         trainer.test(data='test')
         print("Eval best model")
-        trainer.load_model(name='best', exp_name=option.exp_name if option.train_batch != 0 else option.load_model)
-        trainer.test(data='valid')
-        trainer.test(data='test')
+        if option.mode != "random":
+            trainer.load_model(name='best', exp_name=option.exp_name if option.train_batch != 0 else option.load_model)
+            trainer.test(data='valid')
+            trainer.test(data='test')
     else:
         #trainer.load_model()
         trainer.test(data='train', short=100)
@@ -181,12 +188,20 @@ def main(option):
 if __name__ == "__main__":
     #torch.set_printoptions(threshold=100000)
     option = Option.read_options()
-    exp_name = option.exp_name
-    if option.load_model != '':
-        option = Option.load(os.path.join(option.exps_dir, option.load_model))
-        option.exp_name = exp_name
-
-    option.finilize_option()
+    option.finalize_option()
+    print(option.load_model, option.load_option, option.exp_name)
+    exp_name, load_model = option.exp_name, option.load_model
+    meta = option.meta
+    train_batch = option.train_batch
+    reward, metric, bert_path = option.reward, option.metric, option.bert_path
+    print(f"Load option? {option.load_option}") 
+    if option.load_option != "":
+        option = Option.load(os.path.join(option.exps_dir, option.load_option))
+        option.exp_name, option.load_model = exp_name, load_model
+        option.meta = meta
+        option.train_batch = train_batch
+        option.reward, option.metric, option.bert_path = reward, metric, bert_path
+        option.finalize_option()
     option.save()
     print(option.__dict__)
 
