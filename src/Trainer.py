@@ -130,6 +130,7 @@ class Trainer():
 
         for i, (start_entities, queries, answers, all_correct) in enumerate(environment.get_next_batch()):
             self.agent.train()
+            self.agent.test_mode = False
 
             start = time.time()
             if batch_counter >= self.option.train_batch:
@@ -247,6 +248,7 @@ class Trainer():
             f.write("")
         with torch.no_grad():
             self.agent.eval()
+            self.agent.test_mode = True
             if False and not short and self.option.use_cuda:
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
@@ -327,8 +329,7 @@ class Trainer():
 
                 if self.option.metric == "context":
                     # - pad NO_OP
-                    _, _, ranks_np = self.agent.get_context_reward(
-                        sequences, all_correct[::self.option.test_times], test=True)
+                    _, _, ranks_np = self.agent.get_context_reward(sequences, all_correct[::self.option.test_times])
 
                 elif self.option.metric == "answer":
                     current_entities = current_entities.cpu()

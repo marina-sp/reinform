@@ -40,31 +40,22 @@ class Policy_mlp(nn.Module):
 class Bert_policy(nn.Module):
     def __init__(self, data_loader, path_model, option):
         super().__init__()
-        self.data_loader = data_loader
-        self.path_scoring_model = path_model
         self.option = option
         self.to_state = nn.Linear(256, self.option.state_embed_size)
 
-    def forward(self, sequences, *params):
-        cls = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
-        sep = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
-        input = copy.deepcopy(sequences).cpu()
-        input[:, 0] = self.data_loader.kg.mask_token_id
-        input = torch.cat((cls, input, sep), dim=-1).type(torch.int64) \
-            .to(next(self.path_scoring_model.parameters()).device)
-        _, embs = self.path_scoring_model(input) # probs, embs
+    def forward(self, seq_embs, *params):
         if not self.option.use_cuda:
-            embs = embs.cpu()
+            seq_embs = seq_embs.cpu()
         # print(embs.shape, input.shape)
         #embs = embs.detach()
         if self.option.bert_state_mode == "avg_token":
-            new_state = torch.tanh(self.to_state(embs[:, 1:-1, :].mean(1)))
+            new_state = torch.tanh(self.to_state(seq_embs[:, 1:-1, :].mean(1)))
         elif self.option.bert_state_mode == "avg_all":
-            new_state = torch.tanh(self.to_state(embs.mean(1)))
+            new_state = torch.tanh(self.to_state(seq_embs.mean(1)))
         elif self.option.bert_state_mode == "sep":
-            new_state = torch.tanh(self.to_state(embs[:, -1, :]))
+            new_state = torch.tanh(self.to_state(seq_embs[:, -1, :]))
         elif self.option.bert_state_mode == "mask":
-            new_state = torch.tanh(self.to_state(embs[:, 1, :]))
+            new_state = torch.tanh(self.to_state(seq_embs[:, 1, :]))
         return new_state, torch.tensor(0.0)
 
 
@@ -73,7 +64,8 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         self.option = option
         self.data_loader = data_loader
-        self.dropout = torch.nn.Dropout(0.5)
+        self.dropout = torch.nn.Dropout(self.option.droprate)
+        self.test_mode = False
 
         # use joint id space from Transformer
         self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
@@ -145,7 +137,37 @@ class Agent(nn.Module):
         else:
             return self.item_embedding(rel_ids)
 
-    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random, evalu=False):
+    def embed_path(self, sequences, use_labels=False):
+        device = next(self.path_scoring_model.parameters()).device
+        if not self.test_mode:
+            dropout_mask = torch.bernoulli(torch.ones_like(sequences) * self.option.token_droprate).long()
+            sequences[dropout_mask == 1] = self.data_loader.kg.unk_token_id
+            # print((prev_action_embedding == self.data_loader.kg.unk_token_id).float().mean())
+
+        cls = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
+        sep = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
+        inputs = copy.deepcopy(sequences).cpu()
+        inputs[:, 0] = self.data_loader.kg.mask_token_id
+        inputs = torch.cat((cls, inputs, sep), dim=-1).type(torch.int64).to(device)
+
+        word_embeddings = self.path_scoring_model.bert.embeddings.word_embeddings(inputs.type(torch.int64))
+
+        if self.test_mode:
+            word_embeddings *= 1 - self.token_droprate
+
+        if use_labels:
+            labels = torch.ones_like(inputs) * -1
+            labels[:, 1] = sequences[:, 0]
+            labels = labels.to(device)
+
+            loss, probs, _ = self.path_scoring_model(inputs_embeds=word_embeddings,
+                                                      masked_lm_labels=labels.type(torch.int64))
+            return loss, probs
+        else:
+            _, embs = self.path_scoring_model(inputs_embeds=word_embeddings)  # probs, embs
+            return embs
+
+    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
@@ -158,11 +180,7 @@ class Agent(nn.Module):
             action = self.dropout(action)
 
             if self.option.mode == "bert_mlp":
-                prev_action_embedding = sequences.clone()
-                if not evalu or True:
-                    dropout_mask = torch.bernoulli(torch.ones_like(sequences) * 0.4).long() 
-                    prev_action_embedding[dropout_mask == 1] = self.data_loader.kg.unk_token_id
-                #print((prev_action_embedding == self.data_loader.kg.unk_token_id).float().mean())
+                prev_action_embedding= self.embed_path(sequences.clone(), use_labels=False)
             elif self.option.mode == "lstm_mlp":
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
                 prev_action_embedding = self.dropout(prev_action_embedding)
@@ -300,35 +318,16 @@ class Agent(nn.Module):
         reward = torch.where(reward, positive_reward, negative_reward)
         return reward
 
-    def get_context_reward(self, sequences, all_correct, metric=1, test=False):
+    def get_context_reward(self, sequences, all_correct, metric=1):
         
-        dropout_mask = torch.bernoulli(torch.ones_like(sequences) * 0.3).long()
-        
-        inputs = copy.deepcopy(sequences)
-        inputs[dropout_mask == 1] = self.data_loader.kg.unk_token_id 
-
-        inputs[:,0] = self.data_loader.kg.mask_token_id
-        cls_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.cls_token_id
-        sep_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.sep_token_id
-        inputs = inputs.type(torch.IntTensor)
-        cls_tensor = cls_tensor.type(torch.IntTensor)
-        sep_tensor = sep_tensor.type(torch.IntTensor)
-        inputs = torch.cat((cls_tensor.reshape((cls_tensor.shape[0],-1)),inputs, sep_tensor.reshape((sep_tensor.shape[0],-1))),1)
-        #labels = sequences[:,0].numpy().reshape(-1)
-        labels = torch.ones_like(inputs) * -1
-        labels[:, 1] = sequences[:, 0]
-        if next(self.path_scoring_model.parameters()).device.type == 'cuda':
-            inputs = inputs.cuda()
-            labels = labels.cuda()
-
-        loss, output, _ = self.path_scoring_model(inputs.type(torch.int64), masked_lm_labels=labels.type(torch.int64))
+        loss, scores = self.embed_path(sequences, use_labels=True)
 
         labels = sequences[:,0].numpy().reshape(-1)
-        prediction_scores = output[:, 1].cpu()
+        prediction_scores = scores[:, 1].cpu()
         prediction_prob = prediction_scores.softmax(dim=-1)  #.detach().numpy()  # B x n_actions
 
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels] # B x 1
-        if not test:
+        if not self.test_mode:
             # for unfiltered rank == 1 uncomment:
             # rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
             #times = self.option.train_times

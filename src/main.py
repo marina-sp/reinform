@@ -92,6 +92,9 @@ class Option:
         parser.add_argument('--Lambda', default=0.02, type=float)
         parser.add_argument('--beta', default=0.02, type=float)
 
+        parser.add_argument('--droprate', default=0.5, type=float)
+        parser.add_argument('--token_droprate', default=0.4, type=float)
+
         parser.add_argument("--grad_clip_norm", default=5, type=int)
         parser.add_argument("--eval_batch", default=10, type=int,
                             help="How ofter to validate the model for mrr")
