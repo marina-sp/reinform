@@ -56,13 +56,15 @@ class Bert_policy(nn.Module):
         if not self.option.use_cuda:
             embs = embs.cpu()
         # print(embs.shape, input.shape)
-        embs = embs.detach()
+        #embs = embs.detach()
         if self.option.bert_state_mode == "avg_token":
             new_state = torch.tanh(self.to_state(embs[:, 1:-1, :].mean(1)))
         elif self.option.bert_state_mode == "avg_all":
             new_state = torch.tanh(self.to_state(embs.mean(1)))
         elif self.option.bert_state_mode == "sep":
             new_state = torch.tanh(self.to_state(embs[:, -1, :]))
+        elif self.option.bert_state_mode == "mask":
+            new_state = torch.tanh(self.to_state(embs[:, 1, :]))
         return new_state, torch.tensor(0.0)
 
 
@@ -71,7 +73,7 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         self.option = option
         self.data_loader = data_loader
-        self.dropout = torch.nn.Dropout(0.2)
+        self.dropout = torch.nn.Dropout(0.5)
 
         # use joint id space from Transformer
         self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
@@ -87,9 +89,11 @@ class Agent(nn.Module):
             else:
                 self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
 
-            self.make_bert_trainable(True)
+            self.make_bert_trainable()
+        else:
             ## replace the upper bert loading with this dummy function for debugging
             # self.path_scoring_model = self.fct
+            self.path_scoring_model = torch.nn.Linear(1,2)
 
         # configure the learnable agent parameters
         if self.option.mode.startswith("bert"):
@@ -113,10 +117,10 @@ class Agent(nn.Module):
 
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
 
-    def make_bert_trainable(self, has_grad):
-        self.path_scoring_model.train(has_grad)
+    def make_bert_trainable(self):
+        self.path_scoring_model.train(self.option.train_layers == [])
         for name, par in self.path_scoring_model.named_parameters():
-            if any([f'layer.{id}' in name for id in self.option.train_layers]) or 'cls' in name:
+            if any([f'layer.{id}' in name for id in self.option.train_layers]) or 'cls' in name and self.option.train_layers != []:
                 par.requires_grad_(True)
                 print(f"Layer {name} - activate training")
             else:
@@ -141,7 +145,7 @@ class Agent(nn.Module):
         else:
             return self.item_embedding(rel_ids)
 
-    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random):
+    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random, evalu=False):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
@@ -154,9 +158,14 @@ class Agent(nn.Module):
             action = self.dropout(action)
 
             if self.option.mode == "bert_mlp":
-                prev_action_embedding = sequences
+                prev_action_embedding = sequences.clone()
+                if not evalu or True:
+                    dropout_mask = torch.bernoulli(torch.ones_like(sequences) * 0.4).long() 
+                    prev_action_embedding[dropout_mask == 1] = self.data_loader.kg.unk_token_id
+                #print((prev_action_embedding == self.data_loader.kg.unk_token_id).float().mean())
             elif self.option.mode == "lstm_mlp":
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
+                prev_action_embedding = self.dropout(prev_action_embedding)
 
             # 1. one step of rnn
             current_state, self.state = self.policy_step(prev_action_embedding, self.state)
@@ -212,7 +221,7 @@ class Agent(nn.Module):
                   sequences, step, random):
 
         log_action_prob, out_relations_id, out_entities_id = self.get_action_dist(
-            prev_relation, current_entity, actions_id, queries, sequences, random)
+            prev_relation, current_entity, actions_id, queries, sequences, random, evalu=True)
 
         top_k_action_id, log_current_prob = self.test_search(log_current_prob, log_action_prob, batch_size, step)
         chosen_relation, chosen_entities, sequences = self.update_search_states(
@@ -292,8 +301,12 @@ class Agent(nn.Module):
         return reward
 
     def get_context_reward(self, sequences, all_correct, metric=1, test=False):
-
+        
+        dropout_mask = torch.bernoulli(torch.ones_like(sequences) * 0.3).long()
+        
         inputs = copy.deepcopy(sequences)
+        inputs[dropout_mask == 1] = self.data_loader.kg.unk_token_id 
+
         inputs[:,0] = self.data_loader.kg.mask_token_id
         cls_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.cls_token_id
         sep_tensor = torch.ones((inputs.size(0),), dtype=torch.int8)*self.data_loader.kg.sep_token_id
@@ -314,10 +327,15 @@ class Agent(nn.Module):
         prediction_scores = output[:, 1].cpu()
         prediction_prob = prediction_scores.softmax(dim=-1)  #.detach().numpy()  # B x n_actions
 
-        rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels]
+        rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels] # B x 1
         if not test:
             # for unfiltered rank == 1 uncomment:
             # rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
+            #times = self.option.train_times
+            #mean_per_episode = rewards_prob.reshape(-1, times).mean(-1, keepdim=True) # B
+            #print(mean_per_episode.shape, rewards_prob.shape)
+            #rewards_prob = (rewards_prob.reshape(-1, times) - mean_per_episode).reshape(-1) #.clamp_min_(0)
+            loss = loss * rewards_prob.detach().cpu().mean().clamp_min_(0)
             return loss, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
