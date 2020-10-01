@@ -4,14 +4,15 @@ from tqdm import tqdm
 
 
 class Environment():
-    def __init__(self, option, graph, data, mode="train", all_idx=None):
+    def __init__(self, option, graph, data, mode="train"):
         self.mode = mode
         self.graph = graph
         self.option = option
         self.data_array = torch.from_numpy(data)
 
         self.random_state = np.random.RandomState(self.option.random_seed)
-        self.all_idx = all_idx
+        shuffle_idx = self.random_state.randint(0, len(data), size=len(data))
+        self.shuffled_array = self.data_array[shuffle_idx, :]
 
 
     def get_next_batch(self, n=None):
@@ -45,16 +46,13 @@ class Environment():
 
             yield start_entities, relations, answers, all_correct
 
-    def yield_next_batch_test(self, n):
+    def yield_next_batch_test(self, n=None):
         test_data_count = self.data_array.shape[0]
         #test_data_count = self.option.test_batch_size
         current_idx = 0
         n_batches = (test_data_count-1) // self.option.test_batch_size + 1 if not n else n
         # shuffle if short
-        if n:
-            if self.all_idx is None:
-                self.all_idx = self.random_state.randint(0, len(self.data_array), size=len(self.data_array))
-            self.data_array = self.data_array[self.all_idx, :]
+        iter_array = self.shuffled_array if n else self.data_array
 
         if not n:
             bar = tqdm(total=n_batches)
@@ -70,7 +68,7 @@ class Environment():
                 batch_idx = np.arange(current_idx, test_data_count)
                 current_idx = test_data_count
 
-            batch = self.data_array[batch_idx, :]
+            batch = iter_array[batch_idx, :]
 
             if self.option.reward == "answer":
                 start_entities = batch[:, 0]

@@ -23,7 +23,7 @@ class Data_loader():
     def load_mappings(self):
         self.entity2num, self.num2entity = self.kg.entity2idx, self.kg.idx2entity
         self.relation2num, self.num2relation = self.kg.relation2idx, self.kg.idx2relation
-        self.num2relation[self.kg.unk_token_id] = "NO_OP"
+        self.num2relation[self.kg.unk_token_id] = "UNK"
         self.num2relation[self.kg.pad_token_id] = "PAD"
         self.num2entity[self.kg.pad_token_id] = "PAD"
         self.num2entity[self.kg.unk_token_id] = "UNK"

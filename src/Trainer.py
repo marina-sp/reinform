@@ -18,8 +18,8 @@ class Trainer():
         self.test_graph.update_all_correct(self.data_loader.get_data('test'))
         assert(self.graph != self.test_graph)
         self.train_data = 'train'
-        self.valid_data = 'valid'
-        self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data(self.valid_data)), size=len(self.data_loader.get_data(self.valid_data)))
+        self.valid_data = 'valid'     
+        self.test_envs = {}
 
         # train bert with smaller rate
         self.optimizer = torch.optim.Adam([
@@ -45,15 +45,13 @@ class Trainer():
 
     def calc_cum_discounted_reward(self, rewards):
         # normalization by episode
-        #reward_by_episode = rewards.reshape(-1 , self.option.train_times)
-        #reward_mean = torch.mean(reward_by_episode, 1, keepdim=True)
-        #reward_std = torch.std(reward_by_episode, 1, keepdim=True) + 1e-6
+        reward_by_episode = rewards.reshape(-1 , self.option.train_times)
+        reward_mean = torch.mean(reward_by_episode, 1, keepdim=True)
+        reward_std = torch.std(reward_by_episode, 1, keepdim=True) + 1e-6
         #print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
-        #rewards = torch.div(reward_by_episode - reward_mean, reward_std).flatten() #.clamp_min_(0).flatten()
+        rewards = torch.div(reward_by_episode - reward_mean, reward_std).flatten() #.clamp_min_(0).flatten()
         #print(rewards.mean(-1))
         #base_rewards = rewards.reshape(-1)
-        #print(rewards.mean())
-        #final_reward /= final_reward.max()
 
         # baseline reduction
         #rewards = base_rewards - self.baseline.get_baseline_value()
@@ -85,22 +83,20 @@ class Trainer():
         entropy_loss = - torch.mean(torch.sum(torch.mul(torch.exp(all_logits), all_logits), dim=1))  # scalar
         return entropy_loss
 
-    def calc_reinforce_loss(self, all_loss, all_logits, reward):
+    def calc_reinforce_loss(self, all_loss, all_logits, final_reward):
 
         loss = torch.stack(all_loss, dim=1)  # [B, T]
         base_value = self.baseline.get_baseline_value()
-        final_reward = reward - base_value
-        self.baseline.update(reward.mean())
+        
+        # note: standard reward
+        ##final_reward = reward - base_value
+        ##self.baseline.update(reward.mean())
 
 
-        reward_mean = torch.mean(final_reward)
-        reward_std = torch.std(final_reward) + 1e-6
-        #print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
-        final_reward = torch.div(final_reward - reward_mean, reward_std)
-        #print(final_reward.mean(-1))
+        ##reward_mean = torch.mean(final_reward)
+        ##reward_std = torch.std(final_reward) + 1e-6
+        ##final_reward = torch.div(final_reward - reward_mean, reward_std)
         #final_reward = final_reward.reshape(-1, self.option.max_step_length)
-        #print(final_reward.mean())
-        #final_reward /= final_reward.max()
 
         loss = torch.mul(loss, final_reward)  # [B, T]
         entropy_loss = self.decaying_beta * self.entropy_reg_loss(all_logits)
@@ -225,8 +221,8 @@ class Trainer():
                         self.agent.cuda()
 
             print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
-            print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
-            print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
+            print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean().item()
+            print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean().item()
             log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\t valid mrr: {:2.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
                      .format(batch_counter, print_rewards, cum_discounted_reward.mean(), valid_mrr,
                               print_act_loss, print_loss))
@@ -255,8 +251,11 @@ class Trainer():
                     self.agent.path_scoring_model.cuda()
                 torch.cuda.empty_cache()
                 self.option.use_cuda = False
-            
-            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data), 'test', self.valid_idx if short else None)
+           
+            if data not in self.test_envs:
+                self.test_envs[data] = Environment(self.option, self.test_graph, self.data_loader.get_data(data), 'test')
+            self.test_env = self.test_envs[data]
+
             total_examples = len(self.data_loader.get_data(data)) if not short else (self.option.test_batch_size * short)
 
             # introduce left / right evaluation

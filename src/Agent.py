@@ -137,23 +137,29 @@ class Agent(nn.Module):
         else:
             return self.item_embedding(rel_ids)
 
-    def embed_path(self, sequences, use_labels=False):
+    def embed_path(self, sequences, use_labels=False, drop_tokens=True):
         device = next(self.path_scoring_model.parameters()).device
-        if not self.test_mode:
-            dropout_mask = torch.bernoulli(torch.ones_like(sequences) * self.option.token_droprate).long()
-            sequences[dropout_mask == 1] = self.data_loader.kg.unk_token_id
+        inputs = sequences.detach().clone().cpu()
+        attention_mask = None
+
+        if not self.test_mode and drop_tokens:
+            dropout_mask = torch.bernoulli(torch.ones_like(inputs) * self.option.token_droprate).long()
+            inputs[dropout_mask == 1] = self.data_loader.kg.unk_token_id
             # print((prev_action_embedding == self.data_loader.kg.unk_token_id).float().mean())
+
+            # add attention weights for cls and sep token
+            attention_mask = torch.ones(dropout_mask.shape[0], dropout_mask.shape[1] + 2, device=device)
+            attention_mask[:, 1:-1] = 1 - dropout_mask
 
         cls = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
         sep = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
-        inputs = copy.deepcopy(sequences).cpu()
-        inputs[:, 0] = self.data_loader.kg.mask_token_id
+        inputs[:, 0] = self.data_loader.kg.pad_token_id
         inputs = torch.cat((cls, inputs, sep), dim=-1).type(torch.int64).to(device)
 
         word_embeddings = self.path_scoring_model.bert.embeddings.word_embeddings(inputs.type(torch.int64))
 
-        if self.test_mode:
-            word_embeddings *= 1 - self.token_droprate
+        if self.test_mode and drop_tokens:
+            word_embeddings[2:-1] = word_embeddings[2:-1] * (1 - self.option.token_droprate)
 
         if use_labels:
             labels = torch.ones_like(inputs) * -1
@@ -161,10 +167,12 @@ class Agent(nn.Module):
             labels = labels.to(device)
 
             loss, probs, _ = self.path_scoring_model(inputs_embeds=word_embeddings,
-                                                      masked_lm_labels=labels.type(torch.int64))
+                                                     masked_lm_labels=labels.type(torch.int64),
+                                                     attention_mask=attention_mask)
             return loss, probs
         else:
-            _, embs = self.path_scoring_model(inputs_embeds=word_embeddings)  # probs, embs
+            _, embs = self.path_scoring_model(inputs_embeds=word_embeddings,
+                                              attention_mask=attention_mask)  #probs, embs
             return embs
 
     def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random):
@@ -180,7 +188,7 @@ class Agent(nn.Module):
             action = self.dropout(action)
 
             if self.option.mode == "bert_mlp":
-                prev_action_embedding= self.embed_path(sequences.clone(), use_labels=False)
+                prev_action_embedding= self.embed_path(sequences, use_labels=False, drop_tokens=True)
             elif self.option.mode == "lstm_mlp":
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
                 prev_action_embedding = self.dropout(prev_action_embedding)
@@ -239,7 +247,7 @@ class Agent(nn.Module):
                   sequences, step, random):
 
         log_action_prob, out_relations_id, out_entities_id = self.get_action_dist(
-            prev_relation, current_entity, actions_id, queries, sequences, random, evalu=True)
+            prev_relation, current_entity, actions_id, queries, sequences, random)
 
         top_k_action_id, log_current_prob = self.test_search(log_current_prob, log_action_prob, batch_size, step)
         chosen_relation, chosen_entities, sequences = self.update_search_states(
@@ -320,7 +328,7 @@ class Agent(nn.Module):
 
     def get_context_reward(self, sequences, all_correct, metric=1):
         
-        loss, scores = self.embed_path(sequences, use_labels=True)
+        loss, scores = self.embed_path(sequences, use_labels=True, drop_tokens=True)
 
         labels = sequences[:,0].numpy().reshape(-1)
         prediction_scores = scores[:, 1].cpu()
@@ -334,7 +342,7 @@ class Agent(nn.Module):
             #mean_per_episode = rewards_prob.reshape(-1, times).mean(-1, keepdim=True) # B
             #print(mean_per_episode.shape, rewards_prob.shape)
             #rewards_prob = (rewards_prob.reshape(-1, times) - mean_per_episode).reshape(-1) #.clamp_min_(0)
-            loss = loss * rewards_prob.detach().cpu().mean().clamp_min_(0)
+            #loss = loss * rewards_prob.detach().cpu().mean().clamp_min_(0)
             return loss, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
