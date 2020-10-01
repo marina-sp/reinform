@@ -6,6 +6,7 @@ from torch.distributions.categorical import Categorical
 from collections import defaultdict
 import copy
 from transformers import BertForMaskedLM, BertConfig
+from coke import CoKEWrapper
 
 class Policy_step(nn.Module):
     def __init__(self, option):
@@ -76,12 +77,17 @@ class Agent(nn.Module):
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
-            if option.load_config:
-                self.path_scoring_model = BertForMaskedLM(config=BertConfig.from_pretrained(self.option.bert_path))
+            if option.mode == "coke":
+                self.path_scoring_model = CoKEWrapper()
+                self.embed_path = self.embed_coke_path
             else:
-                self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)
+                self.embed_path = self.embed_bert_path
+                if option.load_config:
+                    self.path_scoring_model = BertForMaskedLM(config=BertConfig.from_pretrained(self.option.bert_path))
+                else:
+                    self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)  # coke decomment
 
-            self.make_bert_trainable()
+                self.make_bert_trainable()  # coke decomment
         else:
             ## replace the upper bert loading with this dummy function for debugging
             # self.path_scoring_model = self.fct
@@ -137,7 +143,15 @@ class Agent(nn.Module):
         else:
             return self.item_embedding(rel_ids)
 
-    def embed_path(self, sequences, use_labels=False):
+    def embed_coke_path(self, sequences, use_labels=None):
+        # todo: check if instead of flipping relations should be inverted
+        scores_np = self.path_scoring_model.get_predictions(sequences.detach().cpu().numpy())
+        print(scores_np.shape)
+        assert scores_np.shape[0] == sequences.shape[0]
+        assert scores_np.shape[1] == self.item_embedding.num_embeddings
+        return torch.from_numpy(scores_np)
+
+    def embed_bert_path(self, sequences, use_labels=False):
         device = next(self.path_scoring_model.parameters()).device
         if not self.test_mode:
             dropout_mask = torch.bernoulli(torch.ones_like(sequences) * self.option.token_droprate).long()
