@@ -66,6 +66,7 @@ class Agent(nn.Module):
         self.option = option
         self.data_loader = data_loader
         self.dropout = torch.nn.Dropout(self.option.droprate)
+        self.token_droprate = self.option.token_droprate
         self.test_mode = False
 
         # use joint id space from Transformer
@@ -77,8 +78,9 @@ class Agent(nn.Module):
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
-            if option.mode == "coke":
-                self.path_scoring_model = CoKEWrapper()
+            if option.mode.startswith("coke") or True:  ## hardcode to use CoKE
+                self.path_scoring_model = CoKEWrapper(self.option.coke_mode, self.option.dataset, 
+                        self.option.coke_len, self.option.mask_head)
                 self.embed_path = self.embed_coke_path
             else:
                 self.embed_path = self.embed_bert_path
@@ -108,10 +110,12 @@ class Agent(nn.Module):
 
         # control random state
         if self.option.use_cuda:
-            self.generator = torch.cuda.manual_seed(self.option.random_seed)
-            torch.manual_seed(self.option.random_seed)
+            self.generator = torch.Generator(device='cuda')
         else:
-            self.generator = torch.manual_seed(self.option.random_seed)
+            self.generator = torch.Generator()
+        
+        self.generator = self.generator.manual_seed(self.option.random_seed)
+        torch.manual_seed(self.option.random_seed)
 
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
 
@@ -145,15 +149,39 @@ class Agent(nn.Module):
 
     def embed_coke_path(self, sequences, use_labels=None):
         # todo: check if instead of flipping relations should be inverted
-        scores_np = self.path_scoring_model.get_predictions(sequences.detach().cpu().numpy())
-        print(scores_np.shape)
+        e0 = sequences[:, :1]
+        path_rel = sequences[:, 3::2]
+        qr = sequences[:, 1:2]
+        t = sequences[:, 2:3]
+        e1 = sequences[:, -1:]
+        #print(sequences.shape, e0.shape, rel.shape)
+        assert(path_rel.shape[1] == self.option.max_step_length)
+
+        # flip to make tail prediction
+        if self.option.mask_head:
+            coke_seq = torch.cat([e0, rel, e1], dim=-1)
+        else:
+            rel_flip = torch.LongTensor([[self.data_loader.kg.rel2inv[r.item()] if r.item() not in [0,3]  else r.item() for r in r_seq] for r_seq in path_rel.flip(-1)])
+            qr_flip = torch.LongTensor([[self.data_loader.kg.rel2inv[r.item()]] for r in qr])
+            if self.option.coke_mode == "lp":
+                coke_seq = torch.cat([rel_flip, t, qr_flip, e0], dim=-1)
+            elif self.option.coke_mode == "anchor":
+                coke_seq = torch.cat([e1, rel_flip, t, qr_flip, e0], dim=-1)
+            elif self.option.coke_mode == "pqa":
+                coke_seq = torch.cat([e1, rel_flip, qr_flip, e0], dim=-1)
+
+        scores_np = self.path_scoring_model.get_predictions(coke_seq.detach().cpu().numpy())
+        #print(scores_np.shape, self.item_embedding.num_embeddings)
         assert scores_np.shape[0] == sequences.shape[0]
-        assert scores_np.shape[1] == self.item_embedding.num_embeddings
-        return torch.from_numpy(scores_np)
+        #assert scores_np.shape[1] == self.item_embedding.num_embeddings ## item embedding has extra "out of bert" tokens in kg_rl.py
+        return 0, torch.from_numpy(scores_np)
+
 
     def embed_bert_path(self, sequences, use_labels=False):
+        drop_tokens = self.option.token_droprate != 0.0
+
         device = next(self.path_scoring_model.parameters()).device
-        if not self.test_mode:
+        if not self.test_mode and drop_tokens:
             dropout_mask = torch.bernoulli(torch.ones_like(sequences) * self.option.token_droprate).long()
             sequences[dropout_mask == 1] = self.data_loader.kg.unk_token_id
             # print((prev_action_embedding == self.data_loader.kg.unk_token_id).float().mean())
@@ -166,7 +194,7 @@ class Agent(nn.Module):
 
         word_embeddings = self.path_scoring_model.bert.embeddings.word_embeddings(inputs.type(torch.int64))
 
-        if self.test_mode:
+        if self.test_mode and drop_tokens:
             word_embeddings *= 1 - self.token_droprate
 
         if use_labels:
@@ -176,17 +204,17 @@ class Agent(nn.Module):
 
             loss, probs, _ = self.path_scoring_model(inputs_embeds=word_embeddings,
                                                       masked_lm_labels=labels.type(torch.int64))
-            return loss, probs
+            return loss, probs[:,1,:]
         else:
             _, embs = self.path_scoring_model(inputs_embeds=word_embeddings)  # probs, embs
-            return embs
+            return embs.cpu()
 
-    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences, random):
+    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
 
-        if random:
+        if self.option.random:
             prelim_scores = torch.randn(out_relations_id.shape)  # B x n_actions
             prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
         elif self.option.mode.endswith("mlp"):
@@ -195,7 +223,7 @@ class Agent(nn.Module):
 
             if self.option.mode == "bert_mlp":
                 prev_action_embedding= self.embed_path(sequences.clone(), use_labels=False)
-            elif self.option.mode == "lstm_mlp":
+            else:
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
                 prev_action_embedding = self.dropout(prev_action_embedding)
 
@@ -227,11 +255,24 @@ class Agent(nn.Module):
     def step(self, *params):
         logits, out_relations_id, out_entities_id = self.get_action_dist(*params)
 
-        # 4 sample action
-        action_id = torch.multinomial(input=logits.exp(), num_samples=1, generator=self.generator)  # B x 1
-        #action_id = Categorical(logits=logits).sample((1,)).view(-1, 1)  # B x 1
+        # 4 sample action (epsilon-greedy)
+        if self.option.epsilon > 0:
+            non_greedy_mask = torch.rand(logits.shape[0], generator=self.generator, device='cuda') < self.option.epsilon
+            action_id = torch.zeros_like(logits, dtype=torch.long)
 
-        # print(" ".join(str(e.item()) for e in action_id.flatten())) # check random state
+            # set non-greedy logits to uniform
+            uniform_logits = logits[non_greedy_mask].detach().clone()
+            uniform_logits[uniform_logits.exp() > 1e-5] = 100  # set all non-zero (pad) positions   
+            uniform_logits = uniform_logits.log_softmax(dim=-1)
+            
+            # replace original logits
+            logits_to_sample = logits.detach().clone()
+            logits_to_sample[non_greedy_mask] = uniform_logits
+        else:
+            logits_to_sample = logits.detach().clone()
+
+        # sample from modified score distribution
+        action_id = torch.multinomial(input=logits_to_sample.exp(), num_samples=1, generator=self.generator)  # B_greedy x 1
 
         # loss # lookup tf.nn.sparse_softmax_cross_entropy_with_logits
         # 5a.
@@ -250,10 +291,10 @@ class Agent(nn.Module):
         return loss, logits, action_id, next_entities, chosen_relation
 
     def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
-                  sequences, step, random):
+                  sequences, step):
 
         log_action_prob, out_relations_id, out_entities_id = self.get_action_dist(
-            prev_relation, current_entity, actions_id, queries, sequences, random, evalu=True)
+            prev_relation, current_entity, actions_id, queries, sequences)
 
         top_k_action_id, log_current_prob = self.test_search(log_current_prob, log_action_prob, batch_size, step)
         chosen_relation, chosen_entities, sequences = self.update_search_states(
@@ -272,8 +313,10 @@ class Agent(nn.Module):
         # shape: BATCH*TIMES --> BATCH x TIMES*MAX_OUT
         # linear order: BATCH(TIMES(MAX_OUT)))
 
+        #print("current, action", log_current_prob.shape, log_action_prob.shape)
         log_current_prob = log_current_prob.repeat_interleave(self.option.max_out).view(batch_size, -1)
         log_action_prob = log_action_prob.view(batch_size, -1)
+        #print("current, action", log_current_prob.shape, log_action_prob.shape)
         log_trail_prob = torch.add(log_action_prob, log_current_prob)
         if (step != self.option.max_step_length -1) or self.option.reward == "answer":
             top_k_log_prob, top_k_action_id = torch.topk(log_trail_prob, self.option.test_times)  # B x TIMES
@@ -285,7 +328,7 @@ class Agent(nn.Module):
         return top_k_action_id, log_current_prob
 
     def update_search_states(self, top_k_action_id, out_relations_id, out_entities_id, sequences, batch_size):
-        if self.option.mode == "lstm_mlp":
+        if self.option.mode.endswith("mlp"):
             new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
             # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
             new_state_0 = self.state[0].view(batch_size, -1, self.option.state_embed_size)
@@ -334,12 +377,14 @@ class Agent(nn.Module):
 
     def get_context_reward(self, sequences, all_correct, metric=1):
         
+        # print("seq to reward: ", sequences)
         loss, scores = self.embed_path(sequences, use_labels=True)
 
         labels = sequences[:,0].numpy().reshape(-1)
-        prediction_scores = scores[:, 1].cpu()
-        prediction_prob = prediction_scores.softmax(dim=-1)  #.detach().numpy()  # B x n_actions
-
+        #print(scores.shape)
+        prediction_prob = scores.log_softmax(dim=-1)  #.detach().numpy()  # B x n_actions
+        
+        #print(prediction_prob.shape)
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels] # B x 1
         if not self.test_mode:
             # for unfiltered rank == 1 uncomment:
@@ -348,17 +393,17 @@ class Agent(nn.Module):
             #mean_per_episode = rewards_prob.reshape(-1, times).mean(-1, keepdim=True) # B
             #print(mean_per_episode.shape, rewards_prob.shape)
             #rewards_prob = (rewards_prob.reshape(-1, times) - mean_per_episode).reshape(-1) #.clamp_min_(0)
-            loss = loss * rewards_prob.detach().cpu().mean().clamp_min_(0)
+            #loss = loss * rewards_prob.detach().cpu().mean().clamp_min_(0) 
             return loss, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
         ranks = np.empty_like(labels).astype(np.int)
 
-        ranked_token_ids = torch.argsort(prediction_scores, descending=True, dim=-1).numpy()
+        ranked_token_ids = torch.argsort(scores.detach().cpu(), descending=True, dim=-1).numpy()
 
         for i, label in enumerate(labels.tolist()):
             ranked = ranked_token_ids[i].tolist()
-            ranked = [x for x in ranked if ((x not in all_correct[i] and x < self.option.num_entity) or x == label)]
+            ranked = [x for x in ranked if ((x not in all_correct[i] and x < self.option.num_entity and x>4) or x == label)]
             rank = ranked.index(label)
 
             ranks[i] = rank

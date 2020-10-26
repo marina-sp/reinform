@@ -1,4 +1,4 @@
-import os
+import os, sys
 import argparse
 import time
 import torch
@@ -10,6 +10,7 @@ from Trainer import Trainer
 from Agent import Agent
 from MetaAgent import MetaAgent
 
+sys.path.extend(['../../coke/CoKE/bin'])
 
 class Option:
     def __init__(self, d):
@@ -50,7 +51,7 @@ class Option:
 
         # Agent configuration
         parser.add_argument('--mode', default='lstm_mlp', type=str,
-                            choices=["lstm_mlp", "bert_mlp", "random"],
+                            choices=["lstm_mlp", "bert_mlp", "random", "coke_mlp", "coke_random"],
                             help='Which model to use: "lstm_mlp", "bert_mlp" or "random"')
         parser.add_argument("--meta", default=False, type=bool, help="")
 
@@ -113,6 +114,12 @@ class Option:
         parser.add_argument('--bert_lr', default=10e-8, type=float)
         parser.add_argument('--bert_state_mode', default="avg_all", type=str, help='["avg_all", "avg_token", "sep"]')
 
+        # coke
+        parser.add_argument('--coke_len', default=7, type=int)
+        parser.add_argument('--coke_mode', default="pqa", type=str) # pqa, anchor, lp
+        parser.add_argument('--mask_head', default=False, type=bool)
+        parser.add_argument('--epsilon', default=0.0, type=float)
+
         if args is None:
             d = vars(parser.parse_args())
         else:
@@ -147,9 +154,12 @@ class Option:
             elif self.dataset == "freebase15k_237":
                 self.bert_path = "../../mastersthesis/transformers/knowledge_graphs/output_minevra_a1/"
 
-        if self.mode == "random":
+        if "random" in self.mode:
+            self.random = True
             self.test_times = 1
             self.train_batch = 0
+        else:
+            self.random = False
 
         if self.use_entity_embed is False:
             self.action_embed_size = self.relation_embed_size
@@ -178,7 +188,7 @@ def main(option):
         trainer.test(data='valid')
         trainer.test(data='test')
         print("Eval best model")
-        if option.mode != "random":
+        if not option.random:
             trainer.load_model(name='best', exp_name=option.exp_name if option.train_batch != 0 else option.load_model)
             trainer.test(data='valid')
             trainer.test(data='test')
@@ -197,6 +207,7 @@ if __name__ == "__main__":
     meta = option.meta
     train_batch = option.train_batch
     reward, metric, bert_path = option.reward, option.metric, option.bert_path
+    coke_len, mask_head = option.coke_len, option.mask_head
     print(f"Load option? {option.load_option}") 
     if option.load_option != "":
         option = Option.load(os.path.join(option.exps_dir, option.load_option))
@@ -204,6 +215,7 @@ if __name__ == "__main__":
         option.meta = meta
         option.train_batch = train_batch
         option.reward, option.metric, option.bert_path = reward, metric, bert_path
+        option.coke_len, option.mask_head = coke_len, mask_head
         option.finalize_option()
     option.save()
     print(option.__dict__)

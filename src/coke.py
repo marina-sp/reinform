@@ -6,13 +6,16 @@ import time
 import logging
 import json
 import random
+import sys
 
 import numpy as np
 import paddle
 import paddle.fluid as fluid
 
+sys.path.extend(["../../coke/CoKE/bin"])
+
 from reader.coke_reader import KBCDataReader
-from reader.coke_reader import PathqueryDataReader
+from reader.coke_reader import PathqueryTensorReader
 from model.coke import CoKEModel
 from optimization import optimization
 # from evaluation import kbc_evaluation
@@ -23,7 +26,7 @@ from evaluation import compute_pathquery_metrics
 from utils.args import ArgumentGroup, print_arguments
 from utils.init import init_pretraining_params, init_checkpoint
 
-from run import *
+from run import init_coke_net_config, init_predict_checkpoint, init_checkpoint
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
@@ -32,18 +35,84 @@ logging.basicConfig(
 logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
+import numpy as np
+import paddle
+import paddle.fluid as fluid
+
+from reader.coke_reader import KBCDataReader
+from reader.coke_reader import PathqueryDataReader
+from model.coke import CoKEModel
+from optimization import optimization
+#from evaluation import kbc_evaluation
+from evaluation import kbc_batch_evaluation
+from evaluation import compute_kbc_metrics
+from evaluation import pathquery_batch_evaluation
+from evaluation import compute_pathquery_metrics
+from utils.args import ArgumentGroup, print_arguments
+from utils.init import init_pretraining_params, init_checkpoint
+
+def create_model(pyreader_name, coke_config, args):
+    pyreader = fluid.layers.py_reader\
+            (
+        capacity=50,
+        shapes=[[-1, args.max_seq_len, 1],
+                [-1, args.max_seq_len, 1],
+                [-1, args.max_seq_len, 1], [-1, 1], [-1, 1]],
+        dtypes=[
+            'int64', 'int64', 'float32', 'int64', 'int64'],
+        lod_levels=[0, 0, 0, 0, 0],
+        name=pyreader_name,
+        use_double_buffer=True)
+    (src_ids, pos_ids, input_mask, mask_labels, mask_positions) = fluid.layers.read_file(pyreader)
+
+    coke = CoKEModel(
+        src_ids=src_ids,
+        position_ids=pos_ids,
+        input_mask=input_mask,
+        config=coke_config,
+        soft_label=args.soft_label,
+        weight_sharing=args.weight_sharing,
+        use_fp16=args.use_fp16)
+
+    loss, fc_out = coke.get_pretraining_output(mask_label=mask_labels, mask_pos=mask_positions)
+    if args.use_fp16 and args.loss_scaling > 1.0:
+        loss = loss * args.loss_scaling
+
+    batch_ones = fluid.layers.fill_constant_batch_size_like(
+        input=mask_labels, dtype='int64', shape=[1], value=1)
+    num_seqs = fluid.layers.reduce_sum(input=batch_ones)
+
+    return pyreader, loss, fc_out, num_seqs
+
 
 ## MODEL SETUP ##
 class CoKEWrapper:
-    def __init__(self, config_file):
-        super().__init__(self)
+    def __init__(self, coke_mode, dataset='wn', max_len=-1, mask_head=False):
+        super().__init__()
 
+        # how sequences are formed on the input
+        self.mask_head = mask_head
+
+        if dataset.lower().startswith("w"):
+            if max_len == -1:   
+                config_name = "pathqueryWN18RR_config"
+            elif max_len in [4,5,6]:
+                config_name = f"pathqueryWN18RR_len{max_len - 2}_config"
+            #config_name = "pathqueryWN18RR_lp_len3_128dim_config"
+        else:
+            config_name = "pathqueryFB237_config"
+ 
+        config_file = f"../../coke/CoKE/configs/{config_name}.sh"
         # read CoKE config
         with open(config_file, "r") as f:
             content = f.read()
         params = [line.split("=") for line in content.split("\n") if line.strip() != "" and not line.startswith("#")]
         config = [part for param_name, param_value in params
-                  for part in [f"--{param_name.strip()}", param_value.strip()]]
+                  for part in [f"--{param_name.strip().lower()}", param_value.strip()]
+                      if param_name not in ["TASK", "NUM_VOCAB", "OUTPUT", "VALID_FILE", "TEST_FILE", "SEN_CANDLI_PATH",
+                          "TRIVAL_SEN_PATH", "LOG_FILE", "LOG_EVAL_FILE", "MAX_POSITION_EMBEDDINS"]]
+        print(config)
+        config.extend(["--do_predict", "True"])
 
         parser = argparse.ArgumentParser()
         model_g = ArgumentGroup(parser, "model", "model configuration and paths.")
@@ -102,9 +171,51 @@ class CoKEWrapper:
         run_type_g.add_arg("use_cuda",                     bool,   True,   "If set, use GPU for training, default is True.")
         run_type_g.add_arg("use_fast_executor",            bool,   False,  "If set, use fast parallel executor (in experiment).")
         run_type_g.add_arg("num_iteration_per_drop_scope", int,    1,      "Ihe iteration intervals to clean up temporary variables.")
-
+        
+        print("argparser set")
         self.args = parser.parse_args(config)
+        self.args.do_train = False
+        
+        if coke_mode != "pqa":
+            mask_head = False
 
+        # todo: fix config loading (hardcode)
+        if dataset.lower().startswith("w"):
+            self.args.task = "wn18rr_paths"
+            self.args.vocab_path = "../../coke/CoKE/data/wn18rr_paths/vocab.txt"
+            self.args.vocab_size = 40970
+            
+            if coke_mode == "lp":
+                #exp_name = "output_wn18rr_paths_lp_len3_128dim"
+                #self.args.hidden_size = 128
+                #exp_name = "output_wn18rr_paths_lp_len3"
+                exp_name = "output_wn18rr_paths_lp_len3_dropent"
+                self.args.init_checkpoint = f"../../coke/CoKE/output/{exp_name}/models/step_17044"
+            elif coke_mode == "anchor":
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_anchor_len3_tail_dropent099/models/step_16000"    #10175"
+                #self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_anchor_len3/models/step_4000"  #step_16959/"
+            elif coke_mode == "pqa":
+                if max_len == -1:
+                    self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_debug/models/step_14168"
+                    max_len = 7
+                elif max_len == 5:
+                    self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_len3/models/step_16959"
+                elif max_len in [4,6]:
+                    self.args.init_checkpoint = f"../../coke/CoKE/output/output_wn18rr_paths_len{max_len-2}/models/step_8479"
+        elif dataset.lower().startswith("f"):
+            self.args.task = "fb15k237_paths"
+            self.args.vocab_path = "../../coke/CoKE/data/fb15k237_paths/vocab.txt"
+            self.args.vocab_size = 15020
+            if max_len == -1:
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_fb15k237_paths/models/step_58462"
+                max_len = 7
+            elif max_len in [4,6]:
+                self.args.init_checkpoint = f"../../coke/CoKE/output/output_fb15k237_paths_len{max_len-2}/models/step_106294"     
+        self.args.use_cuda = True
+        self.args.max_seq_len = max_len
+        self.args.max_position_embeddings = max_len
+        
+        print(self.args)
         if not (self.args.do_train or self.args.do_predict):
             raise ValueError("For args `do_train` and `do_predict`, at "
                              "least one of them must be True.")
@@ -123,16 +234,17 @@ class CoKEWrapper:
 
         # Create model for prediction
         self.test_prog = fluid.Program()
-        with fluid.program_guard(test_prog, startup_prog):
+        with fluid.program_guard(self.test_prog, startup_prog):
             with fluid.unique_name.guard():
                 self.test_pyreader, _, self.fc_out, num_seqs = create_model(
                     pyreader_name='test_reader',
-                    coke_config=coke_config)
+                    coke_config=coke_config,
+                    args=self.args)
 
                 if self.args.use_ema and 'ema' not in dir():
                     ema = fluid.optimizer.ExponentialMovingAverage(self.args.ema_decay)
 
-                fluid.memory_optimize(test_prog, skip_opt_set=[fc_out.name, num_seqs.name])
+                fluid.memory_optimize(self.test_prog, skip_opt_set=[self.fc_out.name, num_seqs.name])
 
         self.test_prog = self.test_prog.clone(for_test=True)
 
@@ -150,10 +262,9 @@ class CoKEWrapper:
         self.test_pyreader.decorate_tensor_provider(test_data_reader.data_generator())
 
         total_fc_out = self.predict(test_data_reader.examples)
-        print(total_fc_out.shape)
 
-        logger.info(">>Finish predicting at %s " % time.ctime())
-
+        logger.debug(">>Finish predicting at %s " % time.ctime())
+        return total_fc_out
 
     def predict(self, all_examples):
         dataset = self.args.dataset
@@ -187,15 +298,16 @@ class CoKEWrapper:
         #            ("\t".join(["TASK", "MQ", "Hits@10"]), outs))
 
     def get_data_reader(self, batch_tensor, epoch, is_training, shuffle, dev_count, vocab_size):
-        Reader = PathQueryTensorReader
+        Reader = PathqueryTensorReader
         data_reader = Reader(
             vocab_path=self.args.vocab_path,
-            data_path=batch_tensor,
+            data=batch_tensor,
             max_seq_len=self.args.max_seq_len,
             batch_size=self.args.batch_size,
             is_training=is_training,
             shuffle=shuffle,
             dev_count=dev_count,
             epoch=epoch,
-            vocab_size=vocab_size)
+            vocab_size=vocab_size,
+            mask_head=self.mask_head)
         return data_reader

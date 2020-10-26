@@ -17,20 +17,20 @@ class Trainer():
         self.test_graph.update_all_correct(self.data_loader.get_data('valid'))
         self.test_graph.update_all_correct(self.data_loader.get_data('test'))
         assert(self.graph != self.test_graph)
-        self.train_data = 'train'
+        self.train_data = 'valid'
         self.valid_data = 'valid'
         self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data(self.valid_data)), size=len(self.data_loader.get_data(self.valid_data)))
 
         # train bert with smaller rate
         self.optimizer = torch.optim.Adam([
                 {'params': self.agent.non_bert_parameters},
-                {'params': self.agent.path_scoring_model.parameters(), 'lr': self.option.bert_lr}
+                #{'params': self.agent.path_scoring_model.parameters(), 'lr': self.option.bert_lr}
             ],
             lr=self.option.learning_rate)#, weight_decay=0.0001)
         self.positive_reward = torch.tensor(1.)
         self.negative_reward = torch.tensor(0.)
         #self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[20,1000], gamma=0.5)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.5, min_lr=1e-1, verbose=True, patience=50, mode="max")
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.5, min_lr=1e-1, verbose=True, patience=100, mode="max")
 
         if option.baseline == "random" and option.reward == "context":
             self.baseline = RandomBaseline(option, agent)
@@ -45,11 +45,12 @@ class Trainer():
 
     def calc_cum_discounted_reward(self, rewards):
         # normalization by episode
-        #reward_by_episode = rewards.reshape(-1 , self.option.train_times)
-        #reward_mean = torch.mean(reward_by_episode, 1, keepdim=True)
-        #reward_std = torch.std(reward_by_episode, 1, keepdim=True) + 1e-6
+        reward_by_episode = rewards.reshape(-1 , self.option.train_times)
+        reward_mean = torch.mean(reward_by_episode, 1, keepdim=True)
+        reward_std = torch.std(reward_by_episode, 1, keepdim=True) + 1e-6
         #print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
-        #rewards = torch.div(reward_by_episode - reward_mean, reward_std).flatten() #.clamp_min_(0).flatten()
+        rewards = torch.div(reward_by_episode - reward_mean, reward_std).flatten() #.clamp_min_(0).flatten()
+        print("mean interval of rewards by episode: ", torch.mean(reward_by_episode.max(dim=-1)[0] - reward_by_episode.min(dim=-1)[0]))
         #print(rewards.mean(-1))
         #base_rewards = rewards.reshape(-1)
         #print(rewards.mean())
@@ -85,18 +86,18 @@ class Trainer():
         entropy_loss = - torch.mean(torch.sum(torch.mul(torch.exp(all_logits), all_logits), dim=1))  # scalar
         return entropy_loss
 
-    def calc_reinforce_loss(self, all_loss, all_logits, reward):
+    def calc_reinforce_loss(self, all_loss, all_logits, final_reward):
 
         loss = torch.stack(all_loss, dim=1)  # [B, T]
-        base_value = self.baseline.get_baseline_value()
-        final_reward = reward - base_value
-        self.baseline.update(reward.mean())
+        #base_value = self.baseline.get_baseline_value()
+        #final_reward = reward - base_value
+        #self.baseline.update(reward.mean())
 
 
-        reward_mean = torch.mean(final_reward)
-        reward_std = torch.std(final_reward) + 1e-6
+        #reward_mean = torch.mean(final_reward)
+        #reward_std = torch.std(final_reward) + 1e-6
         #print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
-        final_reward = torch.div(final_reward - reward_mean, reward_std)
+        #final_reward = torch.div(final_reward - reward_mean, reward_std)
         #print(final_reward.mean(-1))
         #final_reward = final_reward.reshape(-1, self.option.max_step_length)
         #print(final_reward.mean())
@@ -129,6 +130,15 @@ class Trainer():
         best_metric = 0.0
 
         for i, (start_entities, queries, answers, all_correct) in enumerate(environment.get_next_batch()):
+            if i % self.option.eval_batch == 0:
+                valid_mrr = self.test(self.valid_data, 20, verbose=False)
+                if valid_mrr > best_metric:
+                    best_metric = valid_mrr
+                    self.save_model('best')
+                    print('saved new best model')
+                    if self.option.use_cuda:
+                        self.agent.cuda()
+
             self.agent.train()
             self.agent.test_mode = False
 
@@ -141,6 +151,7 @@ class Trainer():
             current_decay_count += 1
             if current_decay_count == self.option.decay_batch:
                 self.decaying_beta *= self.option.decay_rate
+                self.option.epsilon *= self.option.decay_rate
                 current_decay_count = 0
 
             batch_size = start_entities.shape[0]
@@ -170,8 +181,7 @@ class Trainer():
                 if self.option.use_cuda:
                     actions_id = actions_id.cuda()
                 loss, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences,
-                                    self.option.mode == "random")
+                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences)
 
                 sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
                 sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
@@ -215,14 +225,6 @@ class Trainer():
             reward_reshape = (reward_reshape > 0)
             num_ep_correct = np.sum(reward_reshape)
             avg_ep_correct = num_ep_correct / self.option.batch_size
-            if i % self.option.eval_batch == 0:
-                valid_mrr = self.test(self.valid_data, 20, verbose=False)
-                if valid_mrr > best_metric:
-                    best_metric = valid_mrr
-                    self.save_model('best')
-                    print('saved new best model')
-                    if self.option.use_cuda:
-                        self.agent.cuda()
 
             print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
             print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
@@ -231,7 +233,7 @@ class Trainer():
                      .format(batch_counter, print_rewards, cum_discounted_reward.mean(), valid_mrr,
                               print_act_loss, print_loss))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-                f.write("reward: " + str(rewards.mean()) + "\n")
+                f.write(f"reward: {rewards.mean().item()} \t action loss: {torch.stack(all_loss).mean().item()} \t reinforce_loss: {reinforce_loss.item()}\n")
             
             #self.baseline.update(torch.mean(cum_discounted_reward))
             self.optimizer.zero_grad()
@@ -291,8 +293,7 @@ class Trainer():
                         chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
                             prev_relation.cuda(), current_entities.cuda(), actions_id,
                             log_current_prob, queries.cuda(), batch_size, sequences,
-                            step,
-                            self.option.mode == "random")
+                            step)
 
                     else:
                         actions_id = self.test_graph.get_out(current_entities, _start_entities, _queries, _answers,
@@ -300,8 +301,7 @@ class Trainer():
                         chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
                             prev_relation.cuda(), current_entities.cuda(), actions_id.cuda(),
                             log_current_prob, _queries.cuda(), batch_size, sequences,
-                            step,
-                            self.option.mode == "random")
+                            step)
 
                     prev_relation = chosen_relation
                     current_entities = chosen_entities
@@ -354,7 +354,7 @@ class Trainer():
                                 pos += 1
                         if not find_ans:
                             # an appropriate last rank = self.data_loader.num_entity, if not found but no big difference
-                            ranks.append(float('inf')) #self.option.num_entity)
+                            ranks.append(self.option.num_entity)
                     ranks_np = np.array(ranks)
                 
                 if verbose:
@@ -446,6 +446,6 @@ class Trainer():
         state_dict = {k:v for k,v in torch.load(path).items()}  # if not k.startswith('path')}
 
         log.info(f"load model from: {dir_path}\n")
-        log.info("loaded {} parameters\n".format(len(state_dict.keys())))
+        log.info("loaded {} parameters\n".format(list(state_dict.keys())))
 
         self.agent.load_state_dict(state_dict, strict=False)

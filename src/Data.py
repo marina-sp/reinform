@@ -16,6 +16,7 @@ class Data_loader():
         self.kg.prepare_data()
         self.kg.add_reversed_relations()
         self.kg.add_extra_relations()
+        print(self.kg.rel2inv)
 
         self.load_mappings()
         self.load_data_all(data_path)
