@@ -11,6 +11,7 @@ import sys
 import numpy as np
 import paddle
 import paddle.fluid as fluid
+import torch
 
 sys.path.extend(["../../coke/CoKE/bin"])
 
@@ -87,8 +88,12 @@ def create_model(pyreader_name, coke_config, args):
 
 ## MODEL SETUP ##
 class CoKEWrapper:
-    def __init__(self, coke_mode, dataset='wn', max_len=-1, mask_head=False):
+    def __init__(self, option, rel2inv_map, dataset='wn', max_len=-1, mask_head=False):
         super().__init__()
+
+        self.option = option
+        coke_mode = option.coke_mode
+        self.rel2inv = rel2inv_map
 
         # how sequences are formed on the input
         self.mask_head = mask_head
@@ -177,7 +182,7 @@ class CoKEWrapper:
         self.args.do_train = False
         
         if coke_mode != "pqa":
-            mask_head = False
+            self.mask_head = False
 
         # todo: fix config loading (hardcode)
         if dataset.lower().startswith("w"):
@@ -311,3 +316,40 @@ class CoKEWrapper:
             vocab_size=vocab_size,
             mask_head=self.mask_head)
         return data_reader
+
+    def embed_path(self, sequences, use_labels=None, test_mode=None):
+        '''
+        Prepare given sequence and make prediction scores.
+        :param sequences: full paths e, r, e ..., r, e
+        :param use_labels: exists for compatibility reasons
+        :param test_Mode: exists for compatibility reasons
+        :return: prediction loss (0), predicted scores
+        '''
+
+        # todo: check if instead of flipping relations should be inverted
+        e0 = sequences[:, :1]
+        path_rel = sequences[:, 3::2]
+        qr = sequences[:, 1:2]
+        t = sequences[:, 2:3]
+        e1 = sequences[:, -1:]
+        #print(sequences.shape, e0.shape, rel.shape)
+        #assert(path_rel.shape[1] == self.option.max_step_length)
+
+        # flip to make tail prediction
+        if self.mask_head:
+            coke_seq = torch.cat([e0, rel, e1], dim=-1)
+        else:
+            rel_flip = torch.LongTensor([[self.rel2inv[r.item()] if r.item() not in [0,3]  else r.item() for r in r_seq] for r_seq in path_rel.flip(-1)])
+            qr_flip = torch.LongTensor([[self.rel2inv[r.item()]] for r in qr])
+            if self.coke_mode == "lp":
+                coke_seq = torch.cat([rel_flip, t, qr_flip, e0], dim=-1)
+            elif self.coke_mode == "anchor":
+                coke_seq = torch.cat([e1, rel_flip, t, qr_flip, e0], dim=-1)
+            elif self.coke_mode == "pqa":
+                coke_seq = torch.cat([e1, rel_flip, qr_flip, e0], dim=-1)
+
+        scores_np = self.get_predictions(coke_seq.detach().cpu().numpy())
+        #print(scores_np.shape, self.item_embedding.num_embeddings)
+        assert scores_np.shape[0] == sequences.shape[0]
+        #assert scores_np.shape[1] == self.item_embedding.num_embeddings ## item embedding has extra "out of bert" tokens in kg_rl.py
+        return 0, torch.from_numpy(scores_np)

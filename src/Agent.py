@@ -5,60 +5,10 @@ import logging as log
 from torch.distributions.categorical import Categorical
 from collections import defaultdict
 import copy
-#from transformers import BertForMaskedLM, BertConfig
-#from coke import CoKEWrapper
 
-class Policy_step(nn.Module):
-    def __init__(self, option):
-        super(Policy_step, self).__init__()
-        self.option = option
-        self.lstm_cell = torch.nn.LSTMCell(input_size=self.option.action_embed_size,
-                          hidden_size=self.option.state_embed_size)
-    '''
-    - **input** of shape `(seq_len, batch, input_size)`: tensor containing the features
-    - **h_0** of shape `(num_layers * num_directions, batch, hidden_size)`: tensor
-    - **output** of shape `(seq_len, batch, num_directions * hidden_size)`: tensor
-    - **h_n** of shape `(num_layers * num_directions, batch, hidden_size)`: tensor
-    '''
-    def forward(self, prev_action, prev_state):
-        output, new_state = self.lstm_cell(prev_action, prev_state)
-        return output, (output, new_state)
-
-class Policy_mlp(nn.Module):
-    def __init__(self, option):
-        super(Policy_mlp, self).__init__()
-        self.option = option
-        self.hidden_size = option.mlp_hidden_size
-        self.mlp_l1 = nn.Linear(self.option.state_embed_size + self.option.action_embed_size,
-                                self.hidden_size, bias=True)
-        self.mlp_l2 = nn.Linear(self.hidden_size, self.option.action_embed_size, bias=True)
-
-    def forward(self, state_query):
-        hidden = torch.relu(self.mlp_l1(state_query))
-        output = torch.relu(self.mlp_l2(hidden)).unsqueeze(1)
-        return output
-
-class Bert_policy(nn.Module):
-    def __init__(self, data_loader, path_model, option):
-        super().__init__()
-        self.option = option
-        self.to_state = nn.Linear(256, self.option.state_embed_size)
-
-    def forward(self, seq_embs, *params):
-        #if not self.option.use_cuda:
-        #    seq_embs = seq_embs.cpu()
-        # print(embs.shape, input.shape)
-        #embs = embs.detach()
-        if self.option.bert_state_mode == "avg_token":
-            new_state = torch.tanh(self.to_state(seq_embs[:, 1:-1, :].mean(1)))
-        elif self.option.bert_state_mode == "avg_all":
-            new_state = torch.tanh(self.to_state(seq_embs.mean(1)))
-        elif self.option.bert_state_mode == "sep":
-            new_state = torch.tanh(self.to_state(seq_embs[:, -1, :]))
-        elif self.option.bert_state_mode == "mask":
-            new_state = torch.tanh(self.to_state(seq_embs[:, 1, :]))
-        return new_state, torch.tensor(0.0)
-
+from Policy import PolicyStep, PolicyMlp, BertPolicy
+from BertWrapper import BertWrapper
+from coke import CoKEWrapper
 
 class Agent(nn.Module):
     def __init__(self, option, data_loader, graph=None):
@@ -74,22 +24,15 @@ class Agent(nn.Module):
                                            self.option.relation_embed_size,
                                            padding_idx=self.data_loader.kg.pad_token_id
                                            )
-        self.non_bert_parameters = [par for par in self.item_embedding.parameters()]
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
             if option.mode.startswith("coke") or True:  ## hardcode to use CoKE
-                self.path_scoring_model = CoKEWrapper(self.option.coke_mode, self.option.dataset, 
-                        self.option.coke_len, self.option.mask_head)
-                self.embed_path = self.embed_coke_path
+                self.path_scoring_model = CoKEWrapper(
+                    self.option.coke_mode, self.data_loader.rel2inv,
+                    self.option.dataset, self.option.coke_len, self.option.mask_head)
             else:
-                self.embed_path = self.embed_bert_path
-                if option.load_config:
-                    self.path_scoring_model = BertForMaskedLM(config=BertConfig.from_pretrained(self.option.bert_path))
-                else:
-                    self.path_scoring_model = BertForMaskedLM.from_pretrained(self.option.bert_path)  # coke decomment
-
-                self.make_bert_trainable()  # coke decomment
+                self.path_scoring_model = BertWrapper(self.option, self.data_loader)
         else:
             ## replace the upper bert loading with this dummy function for debugging
             # self.path_scoring_model = self.fct
@@ -97,14 +40,11 @@ class Agent(nn.Module):
 
         # configure the learnable agent parameters
         if self.option.mode.startswith("bert"):
-            self.policy_step = Bert_policy(self.data_loader, self.path_scoring_model, option)
-            self.non_bert_parameters.extend([par for par in self.policy_step.to_state.parameters()])
+            self.policy_step = BertPolicy(self.option)
         else:
-            self.policy_step = Policy_step(self.option)
-            self.non_bert_parameters.extend([par for par in self.policy_step.parameters()])
+            self.policy_step = PolicyStep(self.option)
         if self.option.mode.endswith("mlp"):
-            self.policy_mlp = Policy_mlp(self.option)
-            self.non_bert_parameters.extend([par for par in self.policy_mlp.parameters()])
+            self.policy_mlp = PolicyMlp(self.option)
 
         self.state = None
 
@@ -120,17 +60,6 @@ class Agent(nn.Module):
         torch.manual_seed(self.option.random_seed)
 
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
-
-    def make_bert_trainable(self):
-        self.path_scoring_model.train(self.option.train_layers == [])
-        for name, par in self.path_scoring_model.named_parameters():
-            if any([f'layer.{id}' in name for id in self.option.train_layers]) or 'cls' in name and self.option.train_layers != []:
-                par.requires_grad_(True)
-                print(f"Layer {name} - activate training")
-            else:
-                par.requires_grad_(False)
-                print(name) 
-        print(self.path_scoring_model)
 
     def fct(self, seq):
         # only neccessary for testing purposes, simulates random bert output
@@ -149,68 +78,6 @@ class Agent(nn.Module):
         else:
             return self.item_embedding(rel_ids)
 
-    def embed_coke_path(self, sequences, use_labels=None):
-        # todo: check if instead of flipping relations should be inverted
-        e0 = sequences[:, :1]
-        path_rel = sequences[:, 3::2]
-        qr = sequences[:, 1:2]
-        t = sequences[:, 2:3]
-        e1 = sequences[:, -1:]
-        #print(sequences.shape, e0.shape, rel.shape)
-        assert(path_rel.shape[1] == self.option.max_step_length)
-
-        # flip to make tail prediction
-        if self.option.mask_head:
-            coke_seq = torch.cat([e0, rel, e1], dim=-1)
-        else:
-            rel_flip = torch.LongTensor([[self.data_loader.kg.rel2inv[r.item()] if r.item() not in [0,3]  else r.item() for r in r_seq] for r_seq in path_rel.flip(-1)])
-            qr_flip = torch.LongTensor([[self.data_loader.kg.rel2inv[r.item()]] for r in qr])
-            if self.option.coke_mode == "lp":
-                coke_seq = torch.cat([rel_flip, t, qr_flip, e0], dim=-1)
-            elif self.option.coke_mode == "anchor":
-                coke_seq = torch.cat([e1, rel_flip, t, qr_flip, e0], dim=-1)
-            elif self.option.coke_mode == "pqa":
-                coke_seq = torch.cat([e1, rel_flip, qr_flip, e0], dim=-1)
-
-        scores_np = self.path_scoring_model.get_predictions(coke_seq.detach().cpu().numpy())
-        #print(scores_np.shape, self.item_embedding.num_embeddings)
-        assert scores_np.shape[0] == sequences.shape[0]
-        #assert scores_np.shape[1] == self.item_embedding.num_embeddings ## item embedding has extra "out of bert" tokens in kg_rl.py
-        return 0, torch.from_numpy(scores_np)
-
-
-    def embed_bert_path(self, sequences, use_labels=False):
-        drop_tokens = self.option.token_droprate != 0.0
-
-        device = next(self.path_scoring_model.parameters()).device
-        if not self.test_mode and drop_tokens:
-            dropout_mask = torch.bernoulli(torch.ones_like(sequences) * self.option.token_droprate).long()
-            sequences[dropout_mask == 1] = self.data_loader.kg.unk_token_id
-            # print((prev_action_embedding == self.data_loader.kg.unk_token_id).float().mean())
-
-        cls = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.cls_token_id
-        sep = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
-        inputs = copy.deepcopy(sequences).cpu()
-        inputs[:, 0] = self.data_loader.kg.mask_token_id
-        inputs = torch.cat((cls, inputs, sep), dim=-1).type(torch.int64).to(device)
-
-        word_embeddings = self.path_scoring_model.bert.embeddings.word_embeddings(inputs.type(torch.int64))
-
-        if self.test_mode and drop_tokens:
-            word_embeddings *= 1 - self.token_droprate
-
-        if use_labels:
-            labels = torch.ones_like(inputs) * -1
-            labels[:, 1] = sequences[:, 0]
-            labels = labels.to(device)
-
-            loss, probs, _ = self.path_scoring_model(inputs_embeds=word_embeddings,
-                                                      masked_lm_labels=labels.type(torch.int64))
-            return loss, probs[:,1,:]
-        else:
-            _, embs = self.path_scoring_model(inputs_embeds=word_embeddings)  # probs, embs
-            return embs.cpu()
-
     def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
@@ -224,7 +91,8 @@ class Agent(nn.Module):
             action = self.dropout(action)
 
             if self.option.mode == "bert_mlp":
-                prev_action_embedding= self.embed_path(sequences.clone(), use_labels=False)
+                prev_action_embedding = self.path_scoring_model.embed_path(
+                    sequences.clone(), use_labels=False, test_mode=self.test_mode)
             else:
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
                 prev_action_embedding = self.dropout(prev_action_embedding)
@@ -380,22 +248,15 @@ class Agent(nn.Module):
     def get_context_reward(self, sequences, all_correct, metric=1):
         
         # print("seq to reward: ", sequences)
-        loss, scores = self.embed_path(sequences, use_labels=True)
+        loss, scores = self.path_scoring_model.embed_path(sequences, use_labels=True)
 
         labels = sequences[:,0].numpy().reshape(-1)
-        #print(scores.shape)
         prediction_prob = scores.log_softmax(dim=-1)  #.detach().numpy()  # B x n_actions
-        
-        #print(prediction_prob.shape)
+
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels] # B x 1
         if not self.test_mode:
             # for unfiltered rank == 1 uncomment:
             # rewards_prob = rewards_prob > np.percentile(prediction_prob, q=99.9, axis=-1)
-            #times = self.option.train_times
-            #mean_per_episode = rewards_prob.reshape(-1, times).mean(-1, keepdim=True) # B
-            #print(mean_per_episode.shape, rewards_prob.shape)
-            #rewards_prob = (rewards_prob.reshape(-1, times) - mean_per_episode).reshape(-1) #.clamp_min_(0)
-            #loss = loss * rewards_prob.detach().cpu().mean().clamp_min_(0) 
             return loss, rewards_prob, None
 
         rewards_rank = np.empty_like(labels).astype(np.float)
