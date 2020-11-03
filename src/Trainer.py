@@ -201,7 +201,7 @@ class Trainer():
             reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
             #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
             
-            reinforce_loss += self.option.bert_rate * bert_loss# * base_rewards.detach().mean().clamp_min(0)
+            #reinforce_loss += self.option.bert_rate * bert_loss# * base_rewards.detach().mean().clamp_min(0)
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
@@ -245,6 +245,7 @@ class Trainer():
             f.write("")
         with torch.no_grad():
             self.agent.eval()
+            #self.agent.path_scoring_model.path_scoring_model.eval()
             self.agent.test_mode = True
             if False and not short and self.option.use_cuda:
                 self.agent.cpu()

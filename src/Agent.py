@@ -8,7 +8,7 @@ import copy
 
 from Policy import PolicyStep, PolicyMlp, BertPolicy
 from BertWrapper import BertWrapper
-from coke import CoKEWrapper
+
 
 class Agent(nn.Module):
     def __init__(self, option, data_loader, graph=None):
@@ -28,10 +28,13 @@ class Agent(nn.Module):
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
             if option.mode.startswith("coke"):  ## hardcode to use CoKE
+                from coke import CoKEWrapper
                 self.path_scoring_model = CoKEWrapper(
                     self.option.coke_mode, self.data_loader.kg.rel2inv,
                     self.option.dataset, self.option.coke_len, self.option.mask_head)
             else:
+                # BUG: GPU memory overflow after Wrapper was introduced 
+                # additional memory allocated on every inter-evaluation
                 self.path_scoring_model = BertWrapper(self.option, self.data_loader)
         else:
             ## replace the upper bert loading with this dummy function for debugging
