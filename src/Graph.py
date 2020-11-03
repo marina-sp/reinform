@@ -13,6 +13,17 @@ class Knowledge_graph():
         self.all_correct = None
         self.construct_graph()
 
+    @classmethod
+    def get_train_graph(cls, option, data_loader):
+        return cls(option, data_loader, data_loader.get_graph_data())
+
+    @classmethod
+    def get_test_graph(cls, option, data_loader):
+        graph = cls.get_train_graph(option, data_loader)
+        graph.update_all_correct(data_loader.get_data('valid'))
+        graph.update_all_correct(data_loader.get_data('test'))
+        return graph
+
     # 根据原始数据构建知识图谱，out_array存储每个节点向外的出口路径数组
     def construct_graph(self):
         all_out_dict = defaultdict(list)

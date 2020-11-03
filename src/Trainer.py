@@ -12,10 +12,8 @@ class Trainer():
         self.option = option
         self.agent = agent
         self.data_loader = data_loader
-        self.graph = Knowledge_graph(self.option, self.data_loader, self.data_loader.get_graph_data())
-        self.test_graph = deepcopy(self.graph)
-        self.test_graph.update_all_correct(self.data_loader.get_data('valid'))
-        self.test_graph.update_all_correct(self.data_loader.get_data('test'))
+        self.graph = Knowledge_graph.get_train_graph(self.option, self.data_loader)
+        self.test_graph = Knowledge_graph.get_test_graph(self.option, self.data_loader)
         assert(self.graph != self.test_graph)
         self.train_data = 'valid'
         self.valid_data = 'valid'
