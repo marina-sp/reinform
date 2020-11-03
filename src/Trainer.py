@@ -41,7 +41,10 @@ class Trainer():
         self.decaying_beta = self.option.beta
 
         if self.option.use_cuda:
-            self.agent.cuda()
+            self.device = torch.device('cuda')
+            self.agent.to(self.device)
+        else:
+            self.device = torch.device('cpu')
 
     def calc_cum_discounted_reward(self, rewards):
         # normalization by episode
@@ -72,8 +75,8 @@ class Trainer():
         cum_disc_reward = torch.zeros([rewards.shape[0], self.option.max_step_length])
 
         if self.option.use_cuda:
-            running_add = running_add.cuda()
-            cum_disc_reward = cum_disc_reward.cuda()
+            running_add = running_add.to(self.device)
+            cum_disc_reward = cum_disc_reward.to(self.device)
 
         cum_disc_reward[:, self.option.max_step_length - 1] = rewards
         for t in reversed(range(self.option.max_step_length)):
@@ -115,7 +118,7 @@ class Trainer():
         with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "w", encoding='UTF-8') as f:
             f.write("Begin train\n")
         if self.option.use_cuda: 
-            self.agent.cuda()
+            self.agent.to(self.device)
 
         train_data = self.data_loader.get_data(self.train_data, mode='train')
         environment = Environment(self.option, self.graph, train_data, "train")
@@ -130,15 +133,6 @@ class Trainer():
         best_metric = 0.0
 
         for i, (start_entities, queries, answers, all_correct) in enumerate(environment.get_next_batch()):
-            if i % self.option.eval_batch == 0:
-                valid_mrr = self.test(self.valid_data, 20, verbose=False)
-                if valid_mrr > best_metric:
-                    best_metric = valid_mrr
-                    self.save_model('best')
-                    print('saved new best model')
-                    if self.option.use_cuda:
-                        self.agent.cuda()
-
             self.agent.train()
             self.agent.test_mode = False
 
@@ -167,9 +161,9 @@ class Trainer():
             current_entities = start_entities
             queries_cpu = queries.detach().clone()
             if self.option.use_cuda:
-                prev_relation = prev_relation.cuda()
-                queries = queries.cuda()
-                current_entities = current_entities.cuda()
+                prev_relation = prev_relation.to(self.device)
+                queries = queries.to(self.device)
+                current_entities = current_entities.to(self.device)
 
             all_loss = []
             all_logits = []
@@ -178,8 +172,7 @@ class Trainer():
             for step in range(self.option.max_step_length):
                 actions_id = self.graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
                                                  answers, all_correct, step)
-                if self.option.use_cuda:
-                    actions_id = actions_id.cuda()
+                actions_id = actions_id.to(self.device)
                 loss, logits, action_id, next_entities, chosen_relation= \
                     self.agent.step(prev_relation, current_entities, actions_id, queries, sequences)
 
@@ -198,7 +191,7 @@ class Trainer():
             elif self.option.reward == "context":
                 bert_loss, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
                 if self.option.use_cuda:
-                    rewards = rewards.cuda()
+                    rewards = rewards.to(self.device)
 
             # apply baseline deduction
 
@@ -234,7 +227,16 @@ class Trainer():
                               print_act_loss, print_loss))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write(f"reward: {rewards.mean().item()} \t action loss: {torch.stack(all_loss).mean().item()} \t reinforce_loss: {reinforce_loss.item()}\n")
-            
+
+            if i % self.option.eval_batch == 0:
+                valid_mrr = self.test(self.valid_data, 20, verbose=False)
+                if valid_mrr > best_metric:
+                    best_metric = valid_mrr
+                    self.save_model('best')
+                    print('saved new best model')
+                    if self.option.use_cuda:
+                        self.agent.to(self.device)
+
             #self.baseline.update(torch.mean(cum_discounted_reward))
             self.optimizer.zero_grad()
             reinforce_loss.backward()
@@ -254,7 +256,7 @@ class Trainer():
             if False and not short and self.option.use_cuda:
                 self.agent.cpu()
                 if "context" in [self.option.reward, self.option.metric]:
-                    self.agent.path_scoring_model.cuda()
+                    self.agent.path_scoring_model.to(self.device)
                 torch.cuda.empty_cache()
                 self.option.use_cuda = False
             
@@ -281,26 +283,26 @@ class Trainer():
                     sequences = torch.stack((answers, queries, start_entities), -1)#.reshape(batch_size, -1, 3)
 
                 current_entities = start_entities
-                log_current_prob = torch.zeros(start_entities.shape[0]).cuda()
-                sequences=sequences.cuda()
+                log_current_prob = torch.zeros(start_entities.shape[0]).to(self.device)
+                sequences=sequences.to(self.device)
                 
                 
                 for step in range(self.option.max_step_length):
                     if step == 0:
                         actions_id = self.test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
                                                         step)
-                        actions_id = actions_id.cuda()
+                        actions_id = actions_id.to(self.device)
                         chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
-                            prev_relation.cuda(), current_entities.cuda(), actions_id,
-                            log_current_prob, queries.cuda(), batch_size, sequences,
+                            prev_relation.to(self.device), current_entities.to(self.device), actions_id,
+                            log_current_prob, queries.to(self.device), batch_size, sequences,
                             step)
 
                     else:
                         actions_id = self.test_graph.get_out(current_entities, _start_entities, _queries, _answers,
                                                         all_correct, step)
                         chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
-                            prev_relation.cuda(), current_entities.cuda(), actions_id.cuda(),
-                            log_current_prob, _queries.cuda(), batch_size, sequences,
+                            prev_relation.to(self.device), current_entities.to(self.device), actions_id.to(self.device),
+                            log_current_prob, _queries.to(self.device), batch_size, sequences,
                             step)
 
                     prev_relation = chosen_relation

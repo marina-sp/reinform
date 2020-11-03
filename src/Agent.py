@@ -5,8 +5,8 @@ import logging as log
 from torch.distributions.categorical import Categorical
 from collections import defaultdict
 import copy
-from transformers import BertForMaskedLM, BertConfig
-from coke import CoKEWrapper
+#from transformers import BertForMaskedLM, BertConfig
+#from coke import CoKEWrapper
 
 class Policy_step(nn.Module):
     def __init__(self, option):
@@ -45,8 +45,8 @@ class Bert_policy(nn.Module):
         self.to_state = nn.Linear(256, self.option.state_embed_size)
 
     def forward(self, seq_embs, *params):
-        if not self.option.use_cuda:
-            seq_embs = seq_embs.cpu()
+        #if not self.option.use_cuda:
+        #    seq_embs = seq_embs.cpu()
         # print(embs.shape, input.shape)
         #embs = embs.detach()
         if self.option.bert_state_mode == "avg_token":
@@ -111,8 +111,10 @@ class Agent(nn.Module):
         # control random state
         if self.option.use_cuda:
             self.generator = torch.Generator(device='cuda')
+            self.device = torch.device('cuda')
         else:
             self.generator = torch.Generator()
+            self.device = torch.device('cpu')
         
         self.generator = self.generator.manual_seed(self.option.random_seed)
         torch.manual_seed(self.option.random_seed)
@@ -257,7 +259,7 @@ class Agent(nn.Module):
 
         # 4 sample action (epsilon-greedy)
         if self.option.epsilon > 0:
-            non_greedy_mask = torch.rand(logits.shape[0], generator=self.generator, device='cuda') < self.option.epsilon
+            non_greedy_mask = torch.rand(logits.shape[0], generator=self.generator, device=self.device) < self.option.epsilon
             action_id = torch.zeros_like(logits, dtype=torch.long)
 
             # set non-greedy logits to uniform
