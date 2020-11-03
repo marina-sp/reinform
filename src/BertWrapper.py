@@ -8,6 +8,7 @@ class BertWrapper():
         self.option = option
         self.data_loader = data_loader
         self.path_scoring_model = BertForMaskedLM.from_pretrained(option.bert_path)
+        self.device = torch.device('cuda' if self.option.use_cuda else 'cpu')
 
     def make_trainable(self):
         self.train(self.option.train_layers == [])
@@ -30,7 +31,6 @@ class BertWrapper():
         '''
         drop_tokens = self.option.token_droprate != 0.0
 
-        device = next(self.path_scoring_model.parameters()).device
         if not test_mode and drop_tokens:
             dropout_mask = torch.bernoulli(torch.ones_like(sequences) * self.option.token_droprate).long()
             sequences[dropout_mask == 1] = self.data_loader.kg.unk_token_id
@@ -40,7 +40,7 @@ class BertWrapper():
         sep = torch.ones(sequences.shape[0], 1).type(torch.int64) * self.data_loader.kg.sep_token_id
         inputs = copy.deepcopy(sequences).cpu()
         inputs[:, 0] = self.data_loader.kg.mask_token_id
-        inputs = torch.cat((cls, inputs, sep), dim=-1).type(torch.int64).to(device)
+        inputs = torch.cat((cls, inputs, sep), dim=-1).type(torch.int64).to(self.device)
 
         word_embeddings = self.path_scoring_model.bert.embeddings.word_embeddings(inputs.type(torch.int64))
 
@@ -50,7 +50,7 @@ class BertWrapper():
         if use_labels:
             labels = torch.ones_like(inputs) * -1
             labels[:, 1] = sequences[:, 0]
-            labels = labels.to(device)
+            labels = labels.to(self.device)
 
             loss, probs, _ = self.path_scoring_model(inputs_embeds=word_embeddings,
                                                       masked_lm_labels=labels.type(torch.int64))
