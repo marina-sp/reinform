@@ -8,7 +8,9 @@ class BertWrapper():
         self.option = option
         self.data_loader = data_loader
         self.path_scoring_model = BertForMaskedLM.from_pretrained(option.bert_path)
+
         self.device = torch.device('cuda' if self.option.use_cuda else 'cpu')
+        self.path_scoring_model.to(self.device)
 
     def make_trainable(self):
         self.train(self.option.train_layers == [])

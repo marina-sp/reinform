@@ -27,9 +27,9 @@ class Agent(nn.Module):
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
-            if option.mode.startswith("coke") or True:  ## hardcode to use CoKE
+            if option.mode.startswith("coke"):  ## hardcode to use CoKE
                 self.path_scoring_model = CoKEWrapper(
-                    self.option.coke_mode, self.data_loader.rel2inv,
+                    self.option.coke_mode, self.data_loader.kg.rel2inv,
                     self.option.dataset, self.option.coke_len, self.option.mask_head)
             else:
                 self.path_scoring_model = BertWrapper(self.option, self.data_loader)
@@ -92,7 +92,7 @@ class Agent(nn.Module):
 
             if self.option.mode == "bert_mlp":
                 prev_action_embedding = self.path_scoring_model.embed_path(
-                    sequences.clone(), use_labels=False, test_mode=self.test_mode)
+                    sequences.clone(), use_labels=False, test_mode=self.test_mode).to(self.device)
             else:
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
                 prev_action_embedding = self.dropout(prev_action_embedding)
@@ -198,7 +198,7 @@ class Agent(nn.Module):
         return top_k_action_id, log_current_prob
 
     def update_search_states(self, top_k_action_id, out_relations_id, out_entities_id, sequences, batch_size):
-        if self.option.mode.endswith("mlp"):
+        if self.option.mode in ['coke_mlp', 'lstm_mlp']:
             new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
             # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
             new_state_0 = self.state[0].view(batch_size, -1, self.option.state_embed_size)

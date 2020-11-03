@@ -50,4 +50,4 @@ class BertPolicy(nn.Module):
             new_state = torch.tanh(self.to_state(seq_embs[:, -1, :]))
         elif self.option.bert_state_mode == "mask":
             new_state = torch.tanh(self.to_state(seq_embs[:, 1, :]))
-        return new_state, torch.tensor(0.0)
+        return new_state, torch.tensor([0.0])

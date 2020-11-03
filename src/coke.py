@@ -88,12 +88,11 @@ def create_model(pyreader_name, coke_config, args):
 
 ## MODEL SETUP ##
 class CoKEWrapper:
-    def __init__(self, option, rel2inv_map, dataset='wn', max_len=-1, mask_head=False):
+    def __init__(self, coke_mode, rel2inv_map, dataset='wn', max_len=-1, mask_head=False):
         super().__init__()
 
-        self.option = option
-        coke_mode = option.coke_mode
         self.rel2inv = rel2inv_map
+        self.coke_mode = coke_mode
 
         # how sequences are formed on the input
         self.mask_head = mask_head
