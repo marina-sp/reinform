@@ -15,20 +15,15 @@ class Trainer():
         self.graph = Knowledge_graph.get_train_graph(self.option, self.data_loader)
         self.test_graph = Knowledge_graph.get_test_graph(self.option, self.data_loader)
         assert(self.graph != self.test_graph)
-        self.train_data = 'valid'
+        self.train_data = 'train'
         self.valid_data = 'valid'
         self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data(self.valid_data)), size=len(self.data_loader.get_data(self.valid_data)))
 
-        # train bert with smaller rate
-        self.optimizer = torch.optim.Adam([
-                {'params': self.agent.non_bert_parameters},
-                #{'params': self.agent.path_scoring_model.parameters(), 'lr': self.option.bert_lr}
-            ],
-            lr=self.option.learning_rate)#, weight_decay=0.0001)
+        self.optimizer = torch.optim.Adam(self.agent.parameters(), lr=self.option.learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.5, min_lr=1e-1, verbose=True, patience=100, mode="max")
+
         self.positive_reward = torch.tensor(1.)
         self.negative_reward = torch.tensor(0.)
-        #self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[20,1000], gamma=0.5)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.5, min_lr=1e-1, verbose=True, patience=100, mode="max")
 
         if option.baseline == "random" and option.reward == "context":
             self.baseline = RandomBaseline(option, agent)
@@ -211,6 +206,15 @@ class Trainer():
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")
 
+            if i % self.option.eval_batch == 0:
+                valid_mrr = self.test(self.valid_data, 20, verbose=False)
+                if valid_mrr > best_metric:
+                    best_metric = valid_mrr
+                    self.save_model('best')
+                    print('saved new best model')
+                    if self.option.use_cuda:
+                        self.agent.to(self.device)
+
             reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
             reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
             reward_reshape = (reward_reshape > 0)
@@ -225,15 +229,6 @@ class Trainer():
                               print_act_loss, print_loss))
             with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
                 f.write(f"reward: {rewards.mean().item()} \t action loss: {torch.stack(all_loss).mean().item()} \t reinforce_loss: {reinforce_loss.item()}\n")
-
-            if i % self.option.eval_batch == 0:
-                valid_mrr = self.test(self.valid_data, 20, verbose=False)
-                if valid_mrr > best_metric:
-                    best_metric = valid_mrr
-                    self.save_model('best')
-                    print('saved new best model')
-                    if self.option.use_cuda:
-                        self.agent.to(self.device)
 
             #self.baseline.update(torch.mean(cum_discounted_reward))
             self.optimizer.zero_grad()

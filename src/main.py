@@ -8,7 +8,7 @@ from Data import Data_loader
 from Trainer import Trainer
 
 from Agent import Agent
-from MetaAgent import MetaAgent
+#from MetaAgent import MetaAgent
 
 sys.path.extend(['../../coke/CoKE/bin'])
 
