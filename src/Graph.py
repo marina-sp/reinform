@@ -4,7 +4,7 @@ from collections import defaultdict
 import copy
 
 
-class Knowledge_graph():
+class Knowledge_graph:
     def __init__(self, option, data_loader, data):
         self.option = option
         self.data = data
@@ -15,16 +15,15 @@ class Knowledge_graph():
 
     @classmethod
     def get_train_graph(cls, option, data_loader):
-        return cls(option, data_loader, data_loader.get_graph_data())
+        return cls(option, data_loader, data_loader.get_base_graph_data())
 
     @classmethod
     def get_test_graph(cls, option, data_loader):
-        graph = cls.get_train_graph(option, data_loader)
-        graph.update_all_correct(data_loader.get_data('valid'))
-        graph.update_all_correct(data_loader.get_data('test'))
+        graph = cls(option, data_loader, data_loader.get_extended_graph_data())
+        graph.update_all_correct(data_loader.get_data('valid', include_inverse=False))
+        graph.update_all_correct(data_loader.get_data('test', include_inverse=False))
         return graph
 
-    # 根据原始数据构建知识图谱，out_array存储每个节点向外的出口路径数组
     def construct_graph(self):
         all_out_dict = defaultdict(list)
         for head, relation, tail, _ in self.data:
@@ -34,13 +33,13 @@ class Knowledge_graph():
 
         # out array: batch size x max actions x 2 (entity, relation)
         out_array = np.ones((self.option.num_entity, self.option.max_out, 2), dtype=np.int64)
-        out_array[:, :, 0] *= self.data_loader.kg.pad_token_id
-        out_array[:, :, 1] *= self.data_loader.kg.pad_token_id
+        out_array[:, :, 0] *= self.data_loader.vocab.pad_token_id
+        out_array[:, :, 1] *= self.data_loader.vocab.pad_token_id
         more_out_count = 0
         for head in all_out_dict:
             # 1st action reserved for: stay in the same state
             if self.option.reward == "answer":
-                out_array[head, 0, 0] = self.data_loader.kg.unk_token_id
+                out_array[head, 0, 0] = self.data_loader.vocab.cls_token_id
                 out_array[head, 0, 1] = head
                 num_out = 1
             else:
@@ -58,7 +57,6 @@ class Knowledge_graph():
         self.all_correct = all_correct
         print("more_out_count", more_out_count)
 
-    # 获取从图谱上current_entities的out_relations, out_entities
     def get_out(self, current_entities, start_entities, query_relations, answers, all_correct, step):
         ret = copy.deepcopy(self.out_array[current_entities, :, :])
         for i in range(current_entities.shape[0]):
@@ -68,14 +66,14 @@ class Knowledge_graph():
 
                 if self.option.reward == "context":
                     # note: different from the orig due to front masking (mask inverse triple)
-                    mask = (self.data_loader.kg.rel2inv[query_relations[i].item()] == relations)
+                    mask = (self.data_loader.vocab.rel2inv[query_relations[i].item()] == relations)
                 elif self.option.reward == "answer":
                     # orig masking
                     mask = (query_relations[i] == relations)
                 mask = mask & answers[i].eq(entities)
 
-                ret[i, :, 0][mask] = self.data_loader.kg.pad_token_id
-                ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
+                ret[i, :, 0][mask] = self.data_loader.vocab.pad_token_id
+                ret[i, :, 1][mask] = self.data_loader.vocab.pad_token_id
             elif current_entities[i] == answers[i]:
                 relations = ret[i, :, 0]
                 entities = ret[i, :, 1]
@@ -84,10 +82,10 @@ class Knowledge_graph():
                     mask = (query_relations[i] == relations)
                 elif self.option.reward == "answer":
                     # orig masking
-                    mask = (self.data_loader.kg.rel2inv[query_relations[i].item()] == relations)
+                    mask = (self.data_loader.vocab.rel2inv[query_relations[i].item()] == relations)
                 mask = mask & start_entities[i].eq(entities)
-                ret[i, :, 0][mask] = self.data_loader.kg.pad_token_id
-                ret[i, :, 1][mask] = self.data_loader.kg.pad_token_id
+                ret[i, :, 0][mask] = self.data_loader.vocab.pad_token_id
+                ret[i, :, 1][mask] = self.data_loader.vocab.pad_token_id
 
             if self.option.reward == "answer":
                 # filter other correct answers at the last step
@@ -97,8 +95,8 @@ class Knowledge_graph():
                     answer = answers[i]
                     for j in range(entities.shape[0]):
                         if entities[j].item() in all_correct[i] and entities[j] != answer:
-                            relations[j] = self.data_loader.kg.pad_token_id
-                            entities[j] = self.data_loader.kg.pad_token_id
+                            relations[j] = self.data_loader.vocab.pad_token_id
+                            entities[j] = self.data_loader.vocab.pad_token_id
 
         return ret
 

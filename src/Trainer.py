@@ -17,7 +17,10 @@ class Trainer():
         assert(self.graph != self.test_graph)
         self.train_data = 'train'
         self.valid_data = 'valid'
-        self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data(self.valid_data)), size=len(self.data_loader.get_data(self.valid_data)))
+        self.valid_idx = np.random.RandomState(self.option.random_seed)\
+            .randint(0,
+                     len(self.data_loader.get_data(self.valid_data, include_inverse=True)),
+                     size=len(self.data_loader.get_data(self.valid_data, include_inverse=True)))
 
         self.optimizer = torch.optim.Adam(self.agent.parameters(), lr=self.option.learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.5, min_lr=1e-1, verbose=True, patience=100, mode="max")
@@ -113,7 +116,7 @@ class Trainer():
         if self.option.use_cuda: 
             self.agent.to(self.device)
 
-        train_data = self.data_loader.get_data(self.train_data, mode='train')
+        train_data = self.data_loader.get_data(self.train_data, include_inverse=self.option.use_inverse)
         environment = Environment(self.option, self.graph, train_data, "train")
 
         batch_counter = 0
@@ -246,14 +249,18 @@ class Trainer():
         with torch.no_grad():
             self.agent.eval()
             self.agent.test_mode = True
-            if False and not short and self.option.use_cuda:
-                self.agent.cpu()
-                if "context" in [self.option.reward, self.option.metric]:
-                    self.agent.path_scoring_model.to(self.device)
+
+            # todo: clean-up
+            if not short and self.option.use_cuda:
+                #self.agent.cpu()
+                #if "context" in [self.option.reward, self.option.metric]:
+                #    self.agent.path_scoring_model.to(self.device)
                 torch.cuda.empty_cache()
-                self.option.use_cuda = False
-            
-            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data), 'test', self.valid_idx if short else None)
+                #self.option.use_cuda = False
+
+            # for test do not include inverted triples, as an emerging entity can not be predicted
+            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data, data != 'test'),
+                                        'test', self.valid_idx if short else None)
             total_examples = len(self.data_loader.get_data(data)) if not short else (self.option.test_batch_size * short)
 
             # introduce left / right evaluation
@@ -407,12 +414,12 @@ class Trainer():
         return metrics
 
     def decode_and_save_paths(self, queries, sequences, ranks, data):
-        str_qs   = [" ".join([self.data_loader.num2entity[h],
-                              self.data_loader.num2relation[r],
-                              self.data_loader.num2entity[t]])
+        str_qs   = [" ".join([self.data_loader.vocab.num2item[h],
+                              self.data_loader.vocab.num2item[r],
+                              self.data_loader.vocab.num2item[t]])
                     for h,r,t in queries.numpy()]
-        str_ents = [[self.data_loader.num2entity[idx] for idx in seq] for seq in sequences[:, ::2].numpy()]
-        str_rels = [[self.data_loader.num2relation[idx] for idx in seq] for seq in sequences[:, 1::2].numpy()]
+        str_ents = [[self.data_loader.vocab.num2item[idx] for idx in seq] for seq in sequences[:, ::2].numpy()]
+        str_rels = [[self.data_loader.vocab.num2item[idx] for idx in seq] for seq in sequences[:, 1::2].numpy()]
 
         with open(os.path.join(self.option.this_expsdir, f"{data}_paths.txt"), "a+", encoding='UTF-8') as f:
             for qid, q in enumerate(str_qs):

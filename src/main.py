@@ -4,7 +4,7 @@ import time
 import torch
 import logging as log
 import numpy as np
-from Data import Data_loader
+from Data import DataLoader
 from Trainer import Trainer
 
 from Agent import Agent
@@ -44,7 +44,7 @@ class Option:
 
         # Dataset
         parser.add_argument('--datadir', default="../datasets", type=str)
-        parser.add_argument('--dataset', default="WN18_RR", type=str,
+        parser.add_argument('--dataset', default="WN18RR-Inductive", type=str,
                             choices=["freebase15k_237", "WN18_RR"])
         parser.add_argument('--use_inverse', default=False, type=bool,
                             help='Set true to include inversed triples to the training.')
@@ -171,9 +171,9 @@ class Option:
 def main(option):
     log.basicConfig(level=log.INFO)
 
-    data_loader = Data_loader(option)
-    option.num_entity = data_loader.num_entity
-    option.num_relation = data_loader.num_relation
+    data_loader = DataLoader(option)
+    option.num_entity = data_loader.vocab.num_entity
+    option.num_relation = data_loader.vocab.num_relation
     agent = MetaAgent(option, data_loader) if option.meta else Agent(option, data_loader)
     trainer = Trainer(option, agent, data_loader)
 

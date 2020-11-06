@@ -7,8 +7,8 @@ from collections import defaultdict
 import copy
 
 from Policy import PolicyStep, PolicyMlp, BertPolicy
-from BertWrapper import BertWrapper
-from coke import CoKEWrapper
+#from BertWrapper import BertWrapper
+#from coke import CoKEWrapper
 
 class Agent(nn.Module):
     def __init__(self, option, data_loader, graph=None):
@@ -22,14 +22,14 @@ class Agent(nn.Module):
         # use joint id space from Transformer
         self.item_embedding = nn.Embedding(self.option.num_relation + self.option.num_entity,
                                            self.option.relation_embed_size,
-                                           padding_idx=self.data_loader.kg.pad_token_id
+                                           padding_idx=self.data_loader.vocab.pad_token_id
                                            )
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
             if option.mode.startswith("coke"):  ## hardcode to use CoKE
                 self.path_scoring_model = CoKEWrapper(
-                    self.option.coke_mode, self.data_loader.kg.rel2inv,
+                    self.option.coke_mode, self.data_loader.vocab.rel2inv,
                     self.option.dataset, self.option.coke_len, self.option.mask_head)
             else:
                 self.path_scoring_model = BertWrapper(self.option, self.data_loader)
@@ -109,7 +109,7 @@ class Agent(nn.Module):
             prelim_scores = torch.sum(torch.mul(output, action), dim=-1)  # B x n_actions
 
         # Masking PAD actions
-        dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.kg.pad_token_id  # B x n_actions
+        dummy_actions_id = torch.ones_like(out_entities_id, dtype=torch.int64) * self.data_loader.vocab.pad_token_id  # B x n_actions
         mask = torch.eq(out_entities_id, dummy_actions_id)  # B x n_actions
         dummy_scores = torch.ones_like(prelim_scores) * (-99999)  # B x n_actions
         scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
@@ -236,7 +236,7 @@ class Agent(nn.Module):
         return chosen_relation, chosen_entities, sequences
 
     def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.relation2num['START']
+        dummy_start_item = self.data_loader.vocab.item2num['START']
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
