@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import logging as log
 from torch.distributions.categorical import Categorical
+from sequence import State
 from collections import defaultdict
 import copy
 
@@ -49,7 +50,7 @@ class Agent(nn.Module):
         if self.option.mode.endswith("mlp"):
             self.policy_mlp = PolicyMlp(self.option)
 
-        self.state = None
+        self.lstm_state = None
 
         # control random state
         if self.option.use_cuda:
@@ -71,8 +72,8 @@ class Agent(nn.Module):
         return probs, embs
 
     def zero_state(self, dim):
-        self.state = [torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device),
-                      torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device)]
+        self.lstm_state = [torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device),
+                           torch.zeros(dim, self.option.state_embed_size).to(self.item_embedding.weight.device)]
 
     def action_encoder(self, rel_ids, ent_ids):
         if self.option.use_entity_embed:
@@ -81,7 +82,7 @@ class Agent(nn.Module):
         else:
             return self.item_embedding(rel_ids)
 
-    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, sequences):
+    def get_action_dist(self, prev_relation, current_entity, actions_id, queries, state):
         # Get state vector
         out_relations_id = actions_id[:, :, 0]  # B x n_actions
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
@@ -94,14 +95,15 @@ class Agent(nn.Module):
             action = self.dropout(action)
 
             if self.option.mode == "bert_mlp":
+                # todo: remove bert mlp
                 prev_action_embedding = self.path_scoring_model.embed_path(
-                    sequences.clone(), use_labels=False, test_mode=self.test_mode).to(self.device)
+                    state.hide_emerging(state.path), use_labels=False, test_mode=self.test_mode).to(self.device)
             else:
                 prev_action_embedding = self.action_encoder(prev_relation, current_entity) # B x action_emb
                 prev_action_embedding = self.dropout(prev_action_embedding)
 
             # 1. one step of rnn
-            current_state, self.state = self.policy_step(prev_action_embedding, self.state)
+            current_state, self.lstm_state = self.policy_step(prev_action_embedding, self.lstm_state)
             current_state = self.dropout(current_state)
             state_query = self.get_decision_input(queries,  current_state,
                                                   current_entity)
@@ -118,15 +120,24 @@ class Agent(nn.Module):
         scores = torch.where(mask, dummy_scores, prelim_scores)  # B x n_actions
         logits = scores.log_softmax(dim=-1)  # B x n_actions
 
-        return logits, out_relations_id, out_entities_id
+        return logits
 
     def get_decision_input(self, queries, current_state, current_entity):
         current_state = current_state.to(queries.device)
         ent_q = self.action_encoder(queries, current_entity)
         return torch.cat([current_state, ent_q], -1)
 
-    def step(self, *params):
-        logits, out_relations_id, out_entities_id = self.get_action_dist(*params)
+    def step(self, state, step):
+        prev_relation = state.get_prev_rel().to(self.device)
+        queries = state.get_query_rel().to(self.device)
+        current_entity = state.get_current_ent(hide=True).to(self.device)
+        actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2
+        actions_id.to(self.device)
+        hidden_actions_id.to(self.device)
+
+        logits = self.get_action_dist(
+            prev_relation, current_entity, hidden_actions_id, queries, state
+        )
 
         # 4 sample action (epsilon-greedy)
         if self.option.epsilon > 0:
@@ -145,36 +156,49 @@ class Agent(nn.Module):
             logits_to_sample = logits.detach().clone()
 
         # sample from modified score distribution
-        action_id = torch.multinomial(input=logits_to_sample.exp(), num_samples=1, generator=self.generator)  # B_greedy x 1
+        action_id = torch.multinomial(input=logits_to_sample.exp(), num_samples=1, generator=self.generator)  # B x 1
 
         # loss # lookup tf.nn.sparse_softmax_cross_entropy_with_logits
         # 5a.
         one_hot = torch.zeros_like(logits).scatter(1, action_id, 1)  # B x n_actions
         loss = - torch.sum(torch.mul(logits, one_hot), dim=1)  # B x n_actions
 
-        # 6. Map back to true id
-        chosen_relation = torch.gather(out_relations_id, dim=1, index=action_id).squeeze()
-        next_entities = torch.gather(out_entities_id, dim=1, index=action_id).squeeze()
+        # 6. Map back from actions to true entity and relations
+
+        # actions_id: B x max_action x 2
+        # to gather, action has to have shape: B x 1 x 2
+        # ids are repeated, since the same idx applies for both elements of a selected action
+        chosen_action = torch.gather(actions_id, dim=1, index=action_id.unsqueeze(1).repeat(1, 1, 2)).squeeze()
         action_id = action_id.squeeze()
         # assert (next_entities == self.graph.get_next(current_entities, action_id)).all()
 
         #sss = self.data_loader.num2relation[(int)(queries[0])] + "\t" + self.data_loader.num2relation[(int)(chosen_relation[0])]
         #log.info(sss)
 
-        return loss, logits, action_id, next_entities, chosen_relation
+        return loss, logits, action_id, chosen_action
 
-    def test_step(self, prev_relation, current_entity, actions_id, log_current_prob, queries, batch_size,
-                  sequences, step):
+    def test_step(self, log_current_prob, batch_size, state, step):
 
-        log_action_prob, out_relations_id, out_entities_id = self.get_action_dist(
-            prev_relation, current_entity, actions_id, queries, sequences)
+        prev_relation = state.get_prev_rel().to(self.device)
+
+        # adjust test rollouts if neccessary
+        queries = state.get_query_rel(do_rollout=step!=0).to(self.device)
+
+        current_entity = state.get_current_ent(hide=True).to(self.device)
+        actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2
+        actions_id.to(self.device)
+        hidden_actions_id.to(self.device)
+
+        #print(prev_relation.shape, queries.shape, current_entity.shape, actions_id.shape)
+
+        log_action_prob = self.get_action_dist(
+            prev_relation, current_entity, hidden_actions_id, queries, state)
 
         top_k_action_id, log_current_prob = self.test_search(log_current_prob, log_action_prob, batch_size, step)
-        chosen_relation, chosen_entities, sequences = self.update_search_states(
-            top_k_action_id,
-            out_relations_id, out_entities_id, sequences, batch_size)
+        chosen_action, states = self.update_search_states(
+            top_k_action_id, actions_id, state, batch_size)
 
-        return chosen_relation, chosen_entities, log_current_prob, sequences
+        return chosen_action, log_current_prob, states
 
     def test_search(self, log_current_prob, log_action_prob,
                     batch_size, step):
@@ -200,48 +224,40 @@ class Agent(nn.Module):
         log_current_prob = torch.gather(log_trail_prob, dim=1, index=top_k_action_id).view(-1)
         return top_k_action_id, log_current_prob
 
-    def update_search_states(self, top_k_action_id, out_relations_id, out_entities_id, sequences, batch_size):
+    def update_search_states(self, top_k_action_id, out_actions_id, states, batch_size):
+        top_k_action_id = top_k_action_id.unsqueeze(2)
+
         if self.option.mode in ['coke_mlp', 'lstm_mlp']:
-            new_state_0 = self.state[0].unsqueeze(1)  # .repeat(1, self.option.max_out, 1)
-            # change B*TIMES x MAX_OUT x STATE_DIM --> B x TIMES*MAX_OUT x STATE_DIM
-            new_state_0 = self.state[0].view(batch_size, -1, self.option.state_embed_size)
-            new_state_1 = self.state[1].unsqueeze(1)  #.repeat(1, self.option.max_out, 1)
-            new_state_1 = self.state[1].view(batch_size, -1, self.option.state_embed_size)
+            #print("lstm shape:", self.lstm_state[0].shape)
+            # B*times x STATE_EMB  --> B x times x STATE_EMB
+            new_state_0 = self.lstm_state[0].view(batch_size, -1, self.option.state_embed_size)
+            new_state_1 = self.lstm_state[1].view(batch_size, -1, self.option.state_embed_size)
 
             # select history according to beam search
-            top_k_action_id_state = top_k_action_id.unsqueeze(2).repeat(1, 1,
-                                                                        self.option.state_embed_size) // self.option.max_out
-            self.state = \
+            top_k_action_id_state = top_k_action_id.repeat(1, 1, self.option.state_embed_size) // self.option.max_out
+            self.lstm_state = \
                 (torch.gather(new_state_0, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size),
                  torch.gather(new_state_1, dim=1, index=top_k_action_id_state).view(-1, self.option.state_embed_size))
 
-        # B*TIMES x MAX_OUT --> B x TIMES*MAX_OUT
-        out_relations_id = out_relations_id.view(batch_size, -1)
-        out_entities_id = out_entities_id.view(batch_size, -1)
+        # B*TIMES x MAX_OUT x 2 --> B x TIMES*MAX_OUT x 2
+        out_actions_id = out_actions_id.view(batch_size, -1, 2)
 
-        # select action according to beam search
-        chosen_relation = torch.gather(out_relations_id, dim=1, index=top_k_action_id).view(-1)
-        chosen_entities = torch.gather(out_entities_id, dim=1, index=top_k_action_id).view(-1)
+        # select action according to beam search: B*times x 2
+        chosen_action = torch.gather(out_actions_id, dim=1,
+                                     index=top_k_action_id.repeat(1, 1, 2)).view(-1, 2)
         # assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
         # select relevant sequences according to beam search
-        seq_len = sequences.shape[-1]
-        top_k_action_id_seq = top_k_action_id.unsqueeze(2).repeat(1, 1, seq_len) // self.option.max_out
+        seq_len = states.steps
+        top_k_action_id_seq = top_k_action_id.repeat(1, 1, seq_len) // self.option.max_out
         # B * times x seq_len --> B x times x seq_len
-        sequences = sequences.unsqueeze(1).view(batch_size, -1, seq_len)
+        new_sequences = states.path.unsqueeze(1).view(batch_size, -1, seq_len)
 
-        sequences = torch.gather(sequences, dim=1, index=top_k_action_id_seq).view(-1, seq_len)
+        states.set_path(
+            torch.gather(new_sequences, dim=1, index=top_k_action_id_seq).view(-1, seq_len)
+        )
 
-        # append new elements to the sequences
-        sequences = torch.cat((sequences, chosen_relation.view(-1, 1), chosen_entities.view(-1, 1)), dim=-1)
-        #sequences = sequences.view(batch_size, -1, sequences.shape[-1])
-
-        return chosen_relation, chosen_entities, sequences
-
-    def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.vocab.start_token_id
-        dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
-        return dummy_start
+        return chosen_action, states
 
     def get_reward(self, current_entities, answers, positive_reward, negative_reward):
         reward = (current_entities == answers)

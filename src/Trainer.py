@@ -4,6 +4,7 @@ import logging as log
 from Graph import Knowledge_graph
 from Environment import Environment
 from Baseline import ReactiveBaseline, RandomBaseline
+from sequence import State
 import numpy as np
 from copy import deepcopy
 
@@ -148,44 +149,48 @@ class Trainer():
             self.agent.zero_state(batch_size)
 
             if self.option.reward == "answer":
-                prev_relation = self.agent.get_dummy_start_relation(batch_size)
-                sequences = torch.empty((batch_size, 0), dtype=queries.dtype)
+                state = State(self.option,
+                              self.data_loader.vocab,
+                              n_seq=batch_size,
+                              query_ent=start_entities,
+                              query_rel=queries,
+                              answers=answers,
+                              graph=self.graph,
+                              all_correct=all_correct)
             else:
-                prev_relation = queries
-                sequences = torch.stack((answers, queries, start_entities), -1)
+                state = State(self.option,
+                              self.data_loader.vocab,
+                              data=answers,
+                              query_ent=start_entities,
+                              query_rel=queries,
+                              answers=answers,
+                              graph=self.graph,
+                              all_correct=all_correct)
 
-            current_entities = start_entities
-            queries_cpu = queries.detach().clone()
-            if self.option.use_cuda:
-                prev_relation = prev_relation.to(self.device)
-                queries = queries.to(self.device)
-                current_entities = current_entities.to(self.device)
+            queries_cpu = state.get_query_rel().detach().clone()
 
             all_loss = []
             all_logits = []
             all_action_id = []
 
             for step in range(self.option.max_step_length):
-                actions_id = self.graph.get_out(current_entities.detach().clone().cpu(), start_entities, queries_cpu,
-                                                 answers, all_correct, step)
-                actions_id = actions_id.to(self.device)
-                loss, logits, action_id, next_entities, chosen_relation= \
-                    self.agent.step(prev_relation, current_entities, actions_id, queries, sequences)
 
-                sequences = torch.cat((sequences, chosen_relation.cpu().reshape((sequences.shape[0], -1))), 1)
-                sequences = torch.cat((sequences, next_entities.cpu().reshape((sequences.shape[0], -1))), 1)
+                loss, logits, action_id, chosen_action = self.agent.step(state, step)
+
+                # prev rel and curr ents are updated internally
+                state.add_steps(chosen_action)
 
                 all_loss.append(loss)
                 all_logits.append(logits)
                 all_action_id.append(action_id)
-                prev_relation = chosen_relation
-                current_entities = next_entities
 
             if self.option.reward == "answer":
-                rewards = self.agent.get_reward(current_entities.cpu(), answers, self.positive_reward, self.negative_reward)
+                rewards = self.agent.get_reward(
+                    state.get_current_ent(hide=True), answers,
+                    self.positive_reward, self.negative_reward)
                 bert_loss = 0 
             elif self.option.reward == "context":
-                bert_loss, rewards, _ = self.agent.get_context_reward(sequences, all_correct)
+                bert_loss, rewards, _ = self.agent.get_context_reward(state.path, all_correct)
                 if self.option.use_cuda:
                     rewards = rewards.to(self.device)
 
@@ -210,7 +215,7 @@ class Trainer():
                 raise ArithmeticError("Error in computing loss")
 
             if i % self.option.eval_batch == 0:
-                valid_mrr = self.test(self.valid_data, 20, verbose=False)
+                valid_mrr = 0# self.test(self.valid_data, 20, verbose=False)
                 if valid_mrr > best_metric:
                     best_metric = valid_mrr
                     self.save_model('best')
@@ -271,72 +276,59 @@ class Trainer():
             #print(len(test_data), num_right, self.option.test_batch_size, first_left_batch, split)
 
             # _variable + all correct: with rollouts; variable: original data
-            for i, (_start_entities, _queries, _answers, start_entities, queries, answers, all_correct)\
+            for i, (start_entities, queries, answers, all_correct)\
                     in enumerate(self.test_env.get_next_batch(short)):
 
                 batch_size = len(start_entities)
                 self.agent.zero_state(batch_size)
                 if self.option.reward == "answer":
-                    prev_relation = self.agent.get_dummy_start_relation(batch_size)
-                    sequences = start_entities.reshape(-1, 1)
+                    state = State(self.option,
+                                  self.data_loader.vocab,
+                                  n_seq=batch_size,
+                                  query_ent=start_entities,
+                                  query_rel=queries,
+                                  answers=answers,
+                                  graph=self.test_graph,
+                                  all_correct=all_correct)
                 else:
-                    prev_relation = queries
-                    sequences = torch.stack((answers, queries, start_entities), -1)#.reshape(batch_size, -1, 3)
+                    state = State(self.option,
+                                  self.data_loader.vocab,
+                                  data=answers,
+                                  query_ent=start_entities,
+                                  query_rel=queries,
+                                  answers=answers,
+                                  graph=self.test_graph,
+                                  all_correct=all_correct)
 
-                current_entities = start_entities
                 log_current_prob = torch.zeros(start_entities.shape[0]).to(self.device)
-                sequences=sequences.to(self.device)
-                
                 
                 for step in range(self.option.max_step_length):
+
                     if step == 0:
-                        actions_id = self.test_graph.get_out(current_entities, start_entities, queries, answers, all_correct,
-                                                        step)
-                        actions_id = actions_id.to(self.device)
-                        chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
-                            prev_relation.to(self.device), current_entities.to(self.device), actions_id,
-                            log_current_prob, queries.to(self.device), batch_size, sequences,
+                        # no rollouts in the first iteration
+                        chosen_action, log_current_prob, state = self.agent.test_step(
+                            log_current_prob, batch_size, state,
                             step)
 
                     else:
-                        actions_id = self.test_graph.get_out(current_entities, _start_entities, _queries, _answers,
-                                                        all_correct, step)
-                        chosen_relation, chosen_entities, log_current_prob, sequences = self.agent.test_step(
-                            prev_relation.to(self.device), current_entities.to(self.device), actions_id.to(self.device),
-                            log_current_prob, _queries.to(self.device), batch_size, sequences,
+                        chosen_action, log_current_prob, state = self.agent.test_step(
+                            log_current_prob, batch_size, state,
                             step)
 
-                    prev_relation = chosen_relation
-                    current_entities = chosen_entities
+                    # append new elements to the sequences
+                    state.add_steps(chosen_action)
 
-
-                if (self.option.reward == "context") and (self.option.metric == "context"):
-                    sequences = sequences.cpu() #.squeeze(1)
-                    triples = torch.stack((answers, queries, start_entities), dim=-1)
-                elif (self.option.reward == "answer") and (self.option.metric == "context"):
-                    # post-process sequences from Minerva for context evaluation
-                    # - save top 1
-                    sequences = sequences[::self.option.test_times, :].cpu()
-                    # - add reversed query to the path
-                    # t=mask rel_inv h=start_entities -- path
-                    inv_queries = torch.tensor([
-                        self.data_loader.kg.rel2inv[rel.item()] for rel in queries
-                    ]).to(queries.device)
-                    sequences = torch.cat((answers.view(-1,1).cpu(), inv_queries.view(-1,1).cpu(), sequences), -1)
-                    triples = torch.stack((start_entities, queries, answers), dim=1)
-                elif (self.option.reward == "answer") and (self.option.metric == "answer"):
-                    # sequences can be printed as is - but only the top 1
-                    sequences = sequences[::self.option.test_times, :].cpu()
-                    triples = torch.stack((start_entities, queries, answers), dim=-1)
-                    pass
+                # todo: move to Sequence class
+                sequences, triples = state.get_eval_path(self.option.metric, self.option.test_times)
 
                 if self.option.metric == "context":
                     # - pad NO_OP
-                    _, _, ranks_np = self.agent.get_context_reward(sequences, all_correct[::self.option.test_times])
+                    _, _, ranks_np = self.agent.get_context_reward(sequences, all_correct)
 
                 elif self.option.metric == "answer":
-                    current_entities = current_entities.cpu()
-                    rewards = self.agent.get_reward(current_entities, _answers,  self.positive_reward, self.negative_reward)
+                    current_entities = state.get_current_ent()
+                    answers = state.get_answer(do_rollout=True)
+                    rewards = self.agent.get_reward(current_entities, answers,  self.positive_reward, self.negative_reward)
                     rewards = rewards.reshape(-1, self.option.test_times).detach().cpu().numpy()
 
                     current_entities_np = current_entities.numpy()

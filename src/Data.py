@@ -108,20 +108,20 @@ class Vocab:
             raise TypeError("Passed relation array contains non-relational indices.")
         return np_array > self.last_orig_idx
 
-    def is_test_entity(self, np_array):
-        if (np_array > self.num_entity).any() \
-                or (np_array < self.reserved_vocab).any():
+    def is_test_entity(self, np_array, strict=True):
+        if strict and ((np_array > self.num_entity).any() or (np_array < self.reserved_vocab).any()):
+            print(np_array)
             raise TypeError("Passed entity array contains invalid indices.")
         return np_array > self.last_base_idx
 
     def dump(self, path):
         with open(path, "w") as fp:
             # order as in init
-            for token in ["PAD", "SEP", "MASK", "UNK", "CLS", "NO_OP", "START"]:
-                fp.write(f"{token}\n")
+            for idx, token in enumerate(["PAD", "SEP", "MASK", "UNK", "CLS", "NO_OP", "START"]):
+                fp.write(f"{token}\t{idx}\n")
             # note: num entity is already shifted by reserved vocab
             for idx in range(self.reserved_vocab, self.num_entity+self.num_relation):
-                fp.write(f"{self.num2item[idx]}\n")
+                fp.write(f"{self.num2item[idx]}\t{idx}\n")
 
 
 class DataLoader:
@@ -137,7 +137,7 @@ class DataLoader:
         raw_triple_by_split = self.read_raw_data()
 
         # manage vocab
-        self.data_paths["vocab"] = os.path.join(root_path, "vocab_.tsv")
+        self.data_paths["vocab"] = os.path.join(root_path, "vocab.tsv")
         self.vocab = Vocab(*self.get_vocab_sets(raw_triple_by_split))
         self.write_vocab()
 

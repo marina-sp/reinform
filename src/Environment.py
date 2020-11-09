@@ -87,10 +87,7 @@ class Environment():
             start_entities_np = start_entities.numpy()
             all_correct = self.graph.get_all_correct(start_entities_np, relations_np)
 
-            _start_entities, _relations, _answers, all_correct = self.data_times(start_entities, relations, answers,
-                                                                                 all_correct, "test")
-
-            yield _start_entities, _relations, _answers, start_entities, relations, answers, all_correct
+            yield start_entities, relations, answers, all_correct
 
     def data_times(self, start_entities, relations, answers, all_correct, mode):
         if mode == "train":
