@@ -39,7 +39,7 @@ class Knowledge_graph:
         for head in all_out_dict:
             # 1st action reserved for: stay in the same state
             if self.option.reward == "answer":
-                out_array[head, 0, 0] = self.data_loader.vocab.cls_token_id
+                out_array[head, 0, 0] = self.data_loader.vocab.no_operation_token_id
                 out_array[head, 0, 1] = head
                 num_out = 1
             else:

@@ -22,12 +22,11 @@ class Vocab:
         relation2num, entity2num = self.build_vocab(base_entities, test_entities, relations)
 
         self.item2num = defaultdict(lambda: self.unk_token_id)
-        self.item2num["START"] = self.start_token_id
 
         self.num2item = {
             self.pad_token_id: "PAD",
             self.unk_token_id: "UNK",
-            self.cls_token_id: "NO_OP"
+            self.no_operation_token_id: "NO_OP"
         }
 
         self.item2num.update(relation2num); self.item2num.update(entity2num)
@@ -115,6 +114,15 @@ class Vocab:
             raise TypeError("Passed entity array contains invalid indices.")
         return np_array > self.last_base_idx
 
+    def dump(self, path):
+        with open(path, "w") as fp:
+            # order as in init
+            for token in ["PAD", "SEP", "MASK", "UNK", "CLS", "NO_OP", "START"]:
+                fp.write(f"{token}\n")
+            # note: num entity is already shifted by reserved vocab
+            for idx in range(self.reserved_vocab, self.num_entity+self.num_relation):
+                fp.write(f"{self.num2item[idx]}\n")
+
 
 class DataLoader:
     def __init__(self, option):
@@ -127,10 +135,21 @@ class DataLoader:
         self.data_paths["valid"] = os.path.join(root_path, "dev.triples")
 
         raw_triple_by_split = self.read_raw_data()
-        self.vocab = Vocab(*self.get_vocab_sets(raw_triple_by_split))
 
+        # manage vocab
+        self.data_paths["vocab"] = os.path.join(root_path, "vocab_.tsv")
+        self.vocab = Vocab(*self.get_vocab_sets(raw_triple_by_split))
+        self.write_vocab()
+
+        # preprocess data by vocab
         self.data = {}
         self.prepare_data(raw_triple_by_split)
+
+    def write_vocab(self):
+        if os.path.exists(self.data_paths["vocab"]):
+            print("Vocabulary file already exists, skip writing...")
+            return
+        self.vocab.dump(self.data_paths["vocab"])
 
     ### CONSTRUCT THE DATA READER ###
     def read_raw_data(self):

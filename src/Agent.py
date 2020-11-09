@@ -239,7 +239,7 @@ class Agent(nn.Module):
         return chosen_relation, chosen_entities, sequences
 
     def get_dummy_start_relation(self, batch_size):
-        dummy_start_item = self.data_loader.vocab.item2num['START']
+        dummy_start_item = self.data_loader.vocab.start_token_id
         dummy_start = torch.ones(batch_size, dtype=torch.int64) * dummy_start_item
         return dummy_start
 
