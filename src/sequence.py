@@ -45,7 +45,7 @@ class State:
             self.add_steps(self.query_ent)
         else:
             self.mode = "context"
-            self.set_path(data) # answers
+            self.set_path(data)  # answers
             self.add_steps(self.query_rel, self.query_ent)
 
     def get_current_ent(self, hide=False):
@@ -68,28 +68,37 @@ class State:
         if self.steps > 1:
             self.current_ent = self.path[:, -1]
             self.prev_rel = self.path[:, -2]
-            
-    def get_eval_path(self, out_mode, test_times):
-        if (self.mode == "context") and (out_mode == "context"):
-            sequences = self.path.cpu()
-            # triples = torch.stack((answers, queries, start_entities), dim=-1)
-            triples = self.path[:, :3]
-        elif (self.mode == "answer") and (out_mode == "context"):
-            # post-process sequences from Minerva for context evaluation
-            # - save top 1
-            sequences = self.path[::test_times, 1:].cpu() # drop artificial prev rel
+
+    def get_context_path(self):
+        if self.mode == "context":
+            return self.path
+        else:
+            sequences = self.path[:, 1:]  # drop artificial prev rel
             # - add reversed query to the path
             # t=mask rel_inv h=start_entities -- path
             inv_queries = torch.tensor([
                 self.vocab.rel2inv[rel.item()] for rel in self.query_rel
             ])
-            sequences = torch.cat((self.answer.view(-1, 1).cpu(), inv_queries.view(-1, 1).cpu(), sequences), -1)
+            return torch.cat((self.answer.view(-1, 1), inv_queries.view(-1, 1), sequences), -1)
+
+    def get_answer_path(self):
+        assert self.mode == "answer"  # context evaluation of answer paths is impossible, sort it out
+        return self.path[:, 1:]
+
+    def get_eval_path(self, out_mode, test_times):
+        if (self.mode == "context") and (out_mode == "context"):
+            sequences = self.get_context_path().cpu()
+            # triples = torch.stack((answers, queries, start_entities), dim=-1)
+            triples = self.path[:, :3]
+        elif (self.mode == "answer") and (out_mode == "context"):
+            # post-process sequences from Minerva for context evaluation
+            # - save top 1
+            sequences = self.get_context_path().cpu()[::test_times]
             triples = torch.stack((self.query_ent, self.query_rel, self.answer), dim=1)
         elif (self.mode == "answer") and (out_mode == "answer"):
             # sequences can be printed as is - but only the top 1
-            sequences = self.path[::test_times, 1:].cpu() # drop artificial prev rel
-            triples = torch.stack((
-                self.query_ent, self.query_rel, self.answer), dim=-1)
+            sequences = self.get_answer_path().cpu()[::test_times]
+            triples = torch.stack((self.query_ent, self.query_rel, self.answer), dim=-1)
         else:
             raise ValueError("Cannot train a model on context and evaluate on answer!")
         return sequences, triples

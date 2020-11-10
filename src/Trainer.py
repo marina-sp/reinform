@@ -190,7 +190,7 @@ class Trainer():
                     self.positive_reward, self.negative_reward)
                 bert_loss = 0 
             elif self.option.reward == "context":
-                bert_loss, rewards, _ = self.agent.get_context_reward(state.path, all_correct)
+                bert_loss, rewards, _ = self.agent.get_context_reward(state.get_context_path(), all_correct)
                 if self.option.use_cuda:
                     rewards = rewards.to(self.device)
 
@@ -318,7 +318,7 @@ class Trainer():
                     # append new elements to the sequences
                     state.add_steps(chosen_action)
 
-                # todo: move to Sequence class
+                # adjust sequence format to the evaluation method
                 sequences, triples = state.get_eval_path(self.option.metric, self.option.test_times)
 
                 if self.option.metric == "context":
