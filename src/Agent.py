@@ -127,13 +127,12 @@ class Agent(nn.Module):
         ent_q = self.action_encoder(queries, current_entity)
         return torch.cat([current_state, ent_q], -1)
 
-    def step(self, state, step):
+    def step(self, state, step):        
         prev_relation = state.get_prev_rel().to(self.device)
         queries = state.get_query_rel().to(self.device)
         current_entity = state.get_current_ent(hide=True).to(self.device)
-        actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2
-        actions_id.to(self.device)
-        hidden_actions_id.to(self.device)
+        actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2        
+        hidden_actions_id = hidden_actions_id.to(self.device)
 
         logits = self.get_action_dist(
             prev_relation, current_entity, hidden_actions_id, queries, state
@@ -168,7 +167,7 @@ class Agent(nn.Module):
         # actions_id: B x max_action x 2
         # to gather, action has to have shape: B x 1 x 2
         # ids are repeated, since the same idx applies for both elements of a selected action
-        chosen_action = torch.gather(actions_id, dim=1, index=action_id.unsqueeze(1).repeat(1, 1, 2)).squeeze()
+        chosen_action = torch.gather(actions_id, dim=1, index=action_id.cpu().unsqueeze(1).repeat(1, 1, 2)).squeeze()
         action_id = action_id.squeeze()
         # assert (next_entities == self.graph.get_next(current_entities, action_id)).all()
 
@@ -186,8 +185,8 @@ class Agent(nn.Module):
 
         current_entity = state.get_current_ent(hide=True).to(self.device)
         actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2
-        actions_id.to(self.device)
-        hidden_actions_id.to(self.device)
+        #actions_id.to(self.device)
+        hidden_actions_id = hidden_actions_id.to(self.device)
 
         #print(prev_relation.shape, queries.shape, current_entity.shape, actions_id.shape)
 
@@ -244,12 +243,12 @@ class Agent(nn.Module):
 
         # select action according to beam search: B*times x 2
         chosen_action = torch.gather(out_actions_id, dim=1,
-                                     index=top_k_action_id.repeat(1, 1, 2)).view(-1, 2)
+                                     index=top_k_action_id.cpu().repeat(1, 1, 2)).view(-1, 2)
         # assert (log_current_prob == top_k_log_prob.view(-1)).all()
 
         # select relevant sequences according to beam search
         seq_len = states.steps
-        top_k_action_id_seq = top_k_action_id.repeat(1, 1, seq_len) // self.option.max_out
+        top_k_action_id_seq = top_k_action_id.cpu().repeat(1, 1, seq_len) // self.option.max_out
         # B * times x seq_len --> B x times x seq_len
         new_sequences = states.path.unsqueeze(1).view(batch_size, -1, seq_len)
 

@@ -186,7 +186,7 @@ class Trainer():
 
             if self.option.reward == "answer":
                 rewards = self.agent.get_reward(
-                    state.get_current_ent(hide=True), answers,
+                    state.get_current_ent(hide=True), answers,  # todo: need to hide?
                     self.positive_reward, self.negative_reward)
                 bert_loss = 0 
             elif self.option.reward == "context":
@@ -215,13 +215,13 @@ class Trainer():
                 raise ArithmeticError("Error in computing loss")
 
             if i % self.option.eval_batch == 0:
-                valid_mrr = 0# self.test(self.valid_data, 20, verbose=False)
+                valid_mrr = self.test(self.valid_data, 20, verbose=False)
                 if valid_mrr > best_metric:
                     best_metric = valid_mrr
                     self.save_model('best')
                     print('saved new best model')
-                    if self.option.use_cuda:
-                        self.agent.to(self.device)
+                    #if self.option.use_cuda:
+                    #    self.agent.to(self.device)
 
             reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
             reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
