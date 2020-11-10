@@ -73,9 +73,10 @@ class Environment():
             batch = self.data_array[batch_idx, :]
 
             if self.option.reward == "answer":
-                start_entities = batch[:, 0]
-                relations = batch[:, 1]
-                answers = batch[:, 2]
+                # invert to predict the same position as the context version
+                start_entities = batch[:, 2]
+                relations = batch[:, 3]
+                answers = batch[:, 0]
                 relations_np = relations.numpy()
             elif self.option.reward == "context":
                 start_entities = batch[:, 2]

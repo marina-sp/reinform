@@ -109,10 +109,11 @@ class Vocab:
         return np_array > self.last_orig_idx
 
     def is_test_entity(self, np_array, strict=True):
-        if strict and ((np_array > self.num_entity).any() or (np_array < self.reserved_vocab).any()):
+        is_entity = (np_array < self.num_entity) & (np_array >= self.reserved_vocab)
+        if strict and not is_entity.all():
             print(np_array)
             raise TypeError("Passed entity array contains invalid indices.")
-        return np_array > self.last_base_idx
+        return is_entity & (np_array > self.last_base_idx)
 
     def dump(self, path):
         with open(path, "w") as fp:
@@ -235,7 +236,10 @@ class DataLoader:
 
     ### ACCESS THE DATA ###
     def get_data(self, data, include_inverse=True):
-        out = self.data[data] + self.data[f'inv_{data}'] if include_inverse else self.data[data]
+        if data == "test":
+            out = self.data["inv_test"]
+        else:
+            out = self.data[data] + self.data[f'inv_{data}'] if include_inverse else self.data[data]
         return np.array(out, dtype=np.int64)
 
     def get_base_graph_data(self):
