@@ -61,19 +61,26 @@ class State:
         return self.prev_rel
 
     def set_path(self, data):
-        self.path = data.type(torch.long)
-        self.n = data.shape[0]
-        self.steps = data.shape[1]
+        data = data.type(torch.long)
+        if len(data.shape) < 2:
+            data = data.reshape(-1, 1)
+
+        self.path = data
+        self.n = self.path.shape[0]
+        self.steps = self.path.shape[1]
 
         if self.steps > 1:
             self.current_ent = self.path[:, -1]
             self.prev_rel = self.path[:, -2]
 
-    def get_context_path(self):
+    def get_context_path(self, test_times=1):
         if self.mode == "context":
             return self.path
         else:
-            sequences = self.path[:, 1:]  # drop artificial prev rel
+            # this lines is reached only in the test setting
+            # if there is a reward vs metric mismatch
+
+            sequences = self.path[::test_times, 1:]  # drop artificial prev rel
             # - add reversed query to the path
             # t=mask rel_inv h=start_entities -- path
             inv_queries = torch.tensor([
@@ -93,7 +100,7 @@ class State:
         elif (self.mode == "answer") and (out_mode == "context"):
             # post-process sequences from Minerva for context evaluation
             # - save top 1
-            sequences = self.get_context_path().cpu()[::test_times]
+            sequences = self.get_context_path(test_times).cpu()
             triples = torch.stack((self.query_ent, self.query_rel, self.answer), dim=1)
         elif (self.mode == "answer") and (out_mode == "answer"):
             # sequences can be printed as is - but only the top 1

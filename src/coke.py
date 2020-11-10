@@ -185,27 +185,20 @@ class CoKEWrapper:
 
         # todo: fix config loading (hardcode)
         if dataset.lower().startswith("w"):
-            self.args.task = "wn18rr_paths"
-            self.args.vocab_path = "../../coke/CoKE/data/wn18rr_paths/vocab.txt"
-            self.args.vocab_size = 40970
+            self.args.task = "wn18rr-ind_paths"
+            self.args.vocab_path = "../../coke/CoKE/data/wn18rr-ind_paths/vocab.txt"
+            self.args.vocab_size = 39986
             
-            if coke_mode == "lp":
-                #exp_name = "output_wn18rr_paths_lp_len3_128dim"
-                #self.args.hidden_size = 128
-                #exp_name = "output_wn18rr_paths_lp_len3"
-                exp_name = "output_wn18rr_paths_lp_len3_dropent"
-                self.args.init_checkpoint = f"../../coke/CoKE/output/{exp_name}/models/step_17044"
-            elif coke_mode == "anchor":
-                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_anchor_len3_tail_dropent099/models/step_16000"    #10175"
-                #self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_anchor_len3/models/step_4000"  #step_16959/"
-            elif coke_mode == "pqa":
-                if max_len == -1:
-                    self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_debug/models/step_14168"
-                    max_len = 7
-                elif max_len == 5:
-                    self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr_paths_len3/models/step_16959"
-                elif max_len in [4,6]:
-                    self.args.init_checkpoint = f"../../coke/CoKE/output/output_wn18rr_paths_len{max_len-2}/models/step_8479"
+            if max_len == -1:
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_6927"
+                max_len = 7
+            elif max_len == 5:
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths_len3/models/step_6598"
+            elif max_len in [4,6]:
+                print(f"no model for the specified length {max_len}. Falling back to the universal model.")
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_6927"
+                max_len = 7
+
         elif dataset.lower().startswith("f"):
             self.args.task = "fb15k237_paths"
             self.args.vocab_path = "../../coke/CoKE/data/fb15k237_paths/vocab.txt"
@@ -259,7 +252,7 @@ class CoKEWrapper:
 
     def get_predictions(self, batch_tensor):
         # Run prediction
-        assert self.dev_count == 1, "During prediction, dev_count expects 1, current is %d" % dev_count
+        assert self.dev_count == 1, "During prediction, dev_count expects 1, current is %d" % self.dev_count
         test_data_reader = self.get_data_reader(batch_tensor, is_training=False,
                                                 epoch=1, shuffle=False, dev_count=self.dev_count,
                                                 vocab_size=self.args.vocab_size)

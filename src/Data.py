@@ -48,7 +48,7 @@ class Vocab:
         assert len(relation2num) == len(self.rel2inv)
         assert all(([self.get_inverse(self.num2item[rel_idx]) == self.num2item[inv_idx]
                  for rel_idx, inv_idx in self.rel2inv.items()]))
-        self.rel2inv[self.cls_token_id] = self.cls_token_id
+        self.rel2inv[self.no_operation_token_id] = self.no_operation_token_id
 
     def build_vocab(self, base_entities, test_entities, relations):
         """
