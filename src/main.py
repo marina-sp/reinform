@@ -156,7 +156,7 @@ class Option:
 
         if "random" in self.mode:
             self.random = True
-            self.test_times = 1
+            #self.test_times = 1
             self.train_batch = 0
         else:
             self.random = False

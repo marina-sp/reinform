@@ -88,7 +88,8 @@ class Agent(nn.Module):
         out_entities_id = actions_id[:, :, 1]  # B x n_actions
 
         if self.option.random:
-            prelim_scores = torch.randn(out_relations_id.shape)  # B x n_actions
+            #prelim_scores = torch.randn(out_relations_id.shape)  # B x n_actions
+            prelim_scores = torch.ones_like(out_relations_id) * 1.0
             prelim_scores = prelim_scores.to(self.item_embedding.weight.device)
         elif self.option.mode.endswith("mlp"):
             action = self.action_encoder(out_relations_id, out_entities_id)  # B x n_actions x action_emb

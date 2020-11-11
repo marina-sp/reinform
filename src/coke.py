@@ -190,7 +190,7 @@ class CoKEWrapper:
             self.args.vocab_size = 39986
             
             if max_len == -1:
-                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_6927"
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_26000"
                 max_len = 7
             elif max_len == 5:
                 self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths_len3/models/step_6598"
