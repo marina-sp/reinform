@@ -53,7 +53,15 @@ class Knowledge_graph:
                 out_array[head, num_out, 1] = tail
                 num_out += 1
                 all_correct[(head, relation)].add(tail)
-        self.out_array = torch.from_numpy(out_array)
+        out_array = torch.from_numpy(out_array)
+
+        # filter out auxillary connections *to* other emerging entities
+        # to leave the entity connections *from* need to be preserved
+        ent_mask = self.data_loader.vocab.is_test_entity(out_array[:, :, 1], strict=False)
+        act_mask = torch.stack((ent_mask, ent_mask), axis=-1)
+        out_array[act_mask] = self.data_loader.vocab.pad_token_id
+
+        self.out_array = out_array
         self.all_correct = all_correct
         print("more_out_count", more_out_count)
 
@@ -101,12 +109,6 @@ class Knowledge_graph:
                         if entities[j].item() in all_correct[deroll(i)] and entities[j] != answer:
                             relations[j] = self.data_loader.vocab.pad_token_id
                             entities[j] = self.data_loader.vocab.pad_token_id
-
-            # filter out irrelevant auxillary connections with other emerging entities
-            ent_mask = self.data_loader.vocab.is_test_entity(ret[:, :, 1], strict=False)
-            act_mask = torch.stack((ent_mask, ent_mask), axis=-1)
-            ret[act_mask] = self.data_loader.vocab.pad_token_id
-
         return ret
 
     def get_all_correct(self, start_entities_np, relations_np):
