@@ -265,10 +265,11 @@ class Trainer():
                 #self.option.use_cuda = False
 
             # for test do not include inverted triples, as an emerging entity can not be predicted
-            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data, data != 'test'),
+            self.test_env = Environment(self.option, self.test_graph, self.data_loader.get_data(data, True),
                                         'test', self.valid_idx if short else None)
             total_examples = len(self.data_loader.get_data(data)) if not short else (self.option.test_batch_size * short)
 
+            # todo: make clean test on head/test predictions
             # introduce left / right evaluation
             metrics = np.zeros((6,3))
             num_right = len(self.data_loader.data[data])
@@ -319,7 +320,7 @@ class Trainer():
                     state.add_steps(chosen_action)
 
                 # adjust sequence format to the evaluation method
-                sequences, triples = state.get_eval_path(self.option.metric, self.option.test_times)
+                sequences, triples = state.get_output_path(self.option.metric, self.option.test_times)
 
                 if self.option.metric == "context":
                     # - pad NO_OP

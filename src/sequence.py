@@ -42,14 +42,28 @@ class State:
             self.mode = "answer"
             self.prev_rel = torch.ones((n_seq, 1), dtype=torch.long) * self.vocab.start_token_id
             self.set_path(self.prev_rel)
-            self.add_steps(self.query_ent)
+            self.add_steps(self.query_ent)  # self.query_ent
         else:
             self.mode = "context"
             self.set_path(data)  # answers
-            self.add_steps(self.query_rel, self.query_ent)
+            self.add_steps(self.query_rel, self.query_ent) #
+
+    def is_first_step(self):
+        if self.mode == "context" and self.steps == 3:
+            return True
+        elif self.mode == "answer" and self.steps == 2:
+            return True
+        else:
+            return False
 
     def get_current_ent(self, hide=False):
+        # hide query entity for the agent
+        if self.is_first_step():
+            return torch.ones_like(self.query_ent) * self.vocab.unk_token_id
         return self.current_ent if not hide else self.hide_emerging(self.current_ent)
+
+    def get_query_ent(self, do_rollout=False):
+        return self.query_ent if not do_rollout else self.query_rel.repeat_interleave(self.option.test_times, 0)
 
     def get_query_rel(self, do_rollout=False):
         return self.query_rel if not do_rollout else self.query_rel.repeat_interleave(self.option.test_times, 0)
@@ -73,51 +87,8 @@ class State:
             self.current_ent = self.path[:, -1]
             self.prev_rel = self.path[:, -2]
 
-    def get_context_path(self, test_times=1):
-        if self.mode == "context":
-            return self.path
-        else:
-            # this lines is reached only in the test setting
-            # if there is a reward vs metric mismatch
-
-            sequences = self.path[::test_times, 1:]  # drop artificial prev rel
-            # - add reversed query to the path
-            # t=mask rel_inv h=start_entities -- path
-            inv_queries = torch.tensor([
-                self.vocab.rel2inv[rel.item()] for rel in self.query_rel
-            ])
-            return torch.cat((self.answer.view(-1, 1), inv_queries.view(-1, 1), sequences), -1)
-
-    def get_answer_path(self):
-        assert self.mode == "answer"  # context evaluation of answer paths is impossible, sort it out
-        return self.path[:, 1:]
-
-    def get_eval_path(self, out_mode, test_times):
-        if (self.mode == "context") and (out_mode == "context"):
-            sequences = self.get_context_path().cpu()
-            # triples = torch.stack((answers, queries, start_entities), dim=-1)
-            triples = self.path[:, :3]
-        elif (self.mode == "answer") and (out_mode == "context"):
-            # post-process sequences from Minerva for context evaluation
-            # - save top 1
-            sequences = self.get_context_path(test_times).cpu()
-            triples = torch.stack((self.query_ent, self.query_rel, self.answer), dim=1)
-        elif (self.mode == "answer") and (out_mode == "answer"):
-            # sequences can be printed as is - but only the top 1
-            sequences = self.get_answer_path().cpu()[::test_times]
-            triples = torch.stack((self.query_ent, self.query_rel, self.answer), dim=-1)
-        else:
-            raise ValueError("Cannot train a model on context and evaluate on answer!")
-        return sequences, triples
-
-    def get_action_space(self, step):
-        action_space = self.graph.get_out(
-            self.current_ent, self.query_ent, self.query_rel, self.answer,
-            self.all_correct, step)
-        return action_space, self.hide_emerging(action_space)
-
     def add_steps(self, *steps):
-        #print(steps)
+        # print(steps)
         for step in steps:
             new_step = step.reshape(self.n, -1).cpu().type(torch.long)
             self.set_path(torch.cat([self.path, new_step], dim=1))
@@ -127,3 +98,56 @@ class State:
         emerging_mask = self.vocab.is_test_entity(out, strict=False)
         out[emerging_mask] = self.vocab.unk_token_id
         return out
+
+    def get_context_path(self, test_times=1):
+        if self.mode == "context":
+            return self.path
+        else:
+            # this lines is reached only in the test setting
+            # - save top 1
+            sequences = self.get_answer_path().cpu()[::test_times]
+
+            # - add reversed query to the path
+            # t=mask rel_inv h=start_entities -- path
+            inv_queries = torch.tensor([
+                self.vocab.rel2inv[rel.item()] for rel in self.query_rel
+            ])
+            return torch.cat((self.answer.view(-1, 1), inv_queries.view(-1, 1), sequences), -1)
+
+    def get_answer_path(self):
+        assert self.mode == "answer"  # context evaluation of answer paths is impossible, sort it out
+        return self.path[:, 1:]  # drop artificial prev rel
+
+    def get_output_path(self, out_mode, test_times):
+        # todo: fix masked query entity
+        if (self.mode == "context") and (out_mode == "context"):
+            # answer - qr - qe (masked) - context
+            sequences = self.get_context_path().cpu()
+            triples = self.path[:, :3]
+        elif (self.mode == "answer") and (out_mode == "context"):
+            # post-process sequences from Minerva for context evaluation
+            sequences = self.get_context_path(test_times=test_times)
+            triples = torch.stack((self.query_ent, self.query_rel, self.answer), dim=1)
+        elif (self.mode == "answer") and (out_mode == "answer"):
+            # sequences can be printed as is - but only the top 1
+            sequences = self.get_answer_path().cpu()[::test_times]
+            triples = torch.stack((self.query_ent, self.query_rel, self.answer), dim=-1)
+        else:
+            raise ValueError("Cannot train a model on context and evaluate on answer!")
+
+        #if out_mode == "context":
+        #    # unmask: answer - qr - qe (masked) - context
+        #    assert (sequences[:, 2] == self.vocab.unk_token_id).all()
+        #    sequences[:, 2] = self.query_ent
+        #else:
+        #    # unmask: qe (masked) - path
+        #    # important: answer paths already dont have the rollouts
+        #    assert (sequences[:, 0] == self.vocab.unk_token_id).all()
+        #    sequences[:, 0] = self.query_ent
+        return sequences, triples
+
+    def get_action_space(self, step):
+        action_space = self.graph.get_out(
+            self.current_ent, self.query_ent, self.query_rel, self.answer,
+            self.all_correct, step)
+        return action_space, self.hide_emerging(action_space)

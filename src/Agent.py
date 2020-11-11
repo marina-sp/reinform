@@ -132,7 +132,11 @@ class Agent(nn.Module):
         prev_relation = state.get_prev_rel().to(self.device)
         queries = state.get_query_rel().to(self.device)
         current_entity = state.get_current_ent(hide=True).to(self.device)
+        if step == 0:
+            assert (current_entity == self.data_loader.vocab.unk_token_id).all()
+        #assert (state.get_current_ent(hide=True) == state.get_current_ent()).all()
         actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2        
+        #assert (actions_id == hidden_actions_id).all()
         hidden_actions_id = hidden_actions_id.to(self.device)
 
         logits = self.get_action_dist(
@@ -185,6 +189,9 @@ class Agent(nn.Module):
         queries = state.get_query_rel(do_rollout=step!=0).to(self.device)
 
         current_entity = state.get_current_ent(hide=True).to(self.device)
+        if step == 0:
+            assert (current_entity == self.data_loader.vocab.unk_token_id).all()
+
         actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2
         #actions_id.to(self.device)
         hidden_actions_id = hidden_actions_id.to(self.device)
@@ -285,7 +292,9 @@ class Agent(nn.Module):
 
         for i, label in enumerate(labels.tolist()):
             ranked = ranked_token_ids[i].tolist()
-            ranked = [x for x in ranked if ((x not in all_correct[i] and x < self.option.num_entity and x>4) or x == label)]
+            ranked = [x for x in ranked if ((x not in all_correct[i]
+                                             and self.option.num_entity > x >= self.data_loader.vocab.reserved_vocab)
+                                            or x == label)]
             rank = ranked.index(label)
 
             ranks[i] = rank
