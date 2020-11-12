@@ -66,36 +66,32 @@ class Knowledge_graph:
         print("more_out_count", more_out_count)
 
     def get_out(self, current_entities, start_entities, query_relations, answers, all_correct, step):
-        # start entities never come with rollouts, but current entities do: introduce index mapping
-        assert len(current_entities) % len(start_entities) == 0
-        deroll = lambda i: i // (len(current_entities) // len(start_entities))
-
         ret = copy.deepcopy(self.out_array[current_entities, :, :])
         for i in range(current_entities.shape[0]):
-            if current_entities[i] == start_entities[deroll(i)]:
+            if current_entities[i] == start_entities[i]:
                 relations = ret[i, :, 0]
                 entities = ret[i, :, 1]
 
                 if self.option.reward == "context":
                     # note: different from the orig due to front masking (mask inverse triple)
-                    mask = (self.data_loader.vocab.rel2inv[query_relations[deroll(i)].item()] == relations)
+                    mask = (self.data_loader.vocab.rel2inv[query_relations[i].item()] == relations)
                 elif self.option.reward == "answer":
                     # orig masking
-                    mask = (query_relations[deroll(i)] == relations)
-                mask = mask & answers[deroll(i)].eq(entities)
+                    mask = (query_relations[i] == relations)
+                mask = mask & answers[i].eq(entities)
 
                 ret[i, :, 0][mask] = self.data_loader.vocab.pad_token_id
                 ret[i, :, 1][mask] = self.data_loader.vocab.pad_token_id
-            elif current_entities[i] == answers[deroll(i)]:
+            elif current_entities[i] == answers[i]:
                 relations = ret[i, :, 0]
                 entities = ret[i, :, 1]
                 if self.option.reward == "context":
                     # note: different from the orig due to front masking (mask inverse triple)
-                    mask = (query_relations[deroll(i)] == relations)
+                    mask = (query_relations[i] == relations)
                 elif self.option.reward == "answer":
                     # orig masking
-                    mask = (self.data_loader.vocab.rel2inv[query_relations[deroll(i)].item()] == relations)
-                mask = mask & start_entities[deroll(i)].eq(entities)
+                    mask = (self.data_loader.vocab.rel2inv[query_relations[i].item()] == relations)
+                mask = mask & start_entities[i].eq(entities)
                 ret[i, :, 0][mask] = self.data_loader.vocab.pad_token_id
                 ret[i, :, 1][mask] = self.data_loader.vocab.pad_token_id
 
@@ -104,9 +100,9 @@ class Knowledge_graph:
                 if step == (self.option.max_step_length - 1):
                     relations = ret[i, :, 0]
                     entities = ret[i, :, 1]
-                    answer = answers[deroll(i)]
+                    answer = answers[i]
                     for j in range(entities.shape[0]):
-                        if entities[j].item() in all_correct[deroll(i)] and entities[j] != answer:
+                        if entities[j].item() in all_correct[i] and entities[j] != answer:
                             relations[j] = self.data_loader.vocab.pad_token_id
                             entities[j] = self.data_loader.vocab.pad_token_id
         return ret

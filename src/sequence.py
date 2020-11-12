@@ -34,6 +34,7 @@ class State:
         # episode info
         self.answer = answers
         self.all_correct = all_correct
+        self.test_rollouts = self.option.test_times
 
         if data is None and n_seq is None:
             raise AttributeError("One of 'data' or 'n_seq' should not be None.")
@@ -55,6 +56,9 @@ class State:
             return True
         else:
             return False
+
+    def do_rollout(self, data):
+        return data.repeat_interleave(self.option.test_times, 0)
 
     def get_current_ent(self, hide=False):
         # hide query entity for the agent
@@ -147,7 +151,22 @@ class State:
         return sequences, triples
 
     def get_action_space(self, step):
+        # start entities never come with rollouts, but current entities do: roll out for
+        assert len(self.current_ent) % len(self.query_ent) == 0
+        if not self.is_first_step():
+            query_ent = self.do_rollout(self.query_ent)
+            query_rel = self.do_rollout(self.query_rel)
+            answer = self.do_rollout(self.answer)
+            all_correct = [x for x in self.all_correct for _ in range(self.test_rollouts)]
+        else:
+            query_ent = self.query_ent
+            query_rel = self.query_rel
+            answer = self.answer
+            all_correct = self.all_correct
+
         action_space = self.graph.get_out(
-            self.current_ent, self.query_ent, self.query_rel, self.answer,
-            self.all_correct, step)
+            self.current_ent, query_ent, query_rel, answer, all_correct, step)
+
+        # actions to emerging ents have been already padded in the graph
+        assert (action_space == self.hide_emerging(action_space)).all()
         return action_space, self.hide_emerging(action_space)
