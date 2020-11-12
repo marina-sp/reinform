@@ -43,30 +43,29 @@ class Trainer():
         else:
             self.device = torch.device('cpu')
 
-    def calc_cum_discounted_reward(self, rewards):
+    def normalize_rewards(self, rewards):
+        # save the output shape, since 1d and 2d input is possible
+        out = rewards.shape
+        n_orig_episodes = out[0] // self.option.train_times
+
         # normalization by episode
-        reward_by_episode = rewards.reshape(-1 , self.option.train_times)
+        reward_by_episode = rewards.reshape(n_orig_episodes, -1)
         reward_mean = torch.mean(reward_by_episode, 1, keepdim=True)
         reward_std = torch.std(reward_by_episode, 1, keepdim=True) + 1e-6
-        #print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
-        rewards = torch.div(reward_by_episode - reward_mean, reward_std).flatten() #.clamp_min_(0).flatten()
-        print("mean interval of rewards by episode: ", torch.mean(reward_by_episode.max(dim=-1)[0] - reward_by_episode.min(dim=-1)[0]))
-        #print(rewards.mean(-1))
-        #base_rewards = rewards.reshape(-1)
-        #print(rewards.mean())
-        #final_reward /= final_reward.max()
+        # print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
+        rewards = torch.div(reward_by_episode - reward_mean, reward_std)
+        rewards = rewards.reshape(out)
+        print("mean interval of rewards by episode: ",
+              torch.mean(reward_by_episode.max(dim=-1)[0] - reward_by_episode.min(dim=-1)[0]))
+        return rewards
 
-        # baseline reduction
-        #rewards = base_rewards - self.baseline.get_baseline_value()
-        #self.baseline.update(base_rewards.mean())
-        
-        #neutralize middle rewards
-        #maxk = 1 + round(.75 * (rewards.numel() - 1))
-        #mink = 1 + round(.25 * (rewards.numel() - 1))
-        #maxv = torch.kthvalue(rewards, maxk).values.item()
-        #minv = torch.kthvalue(rewards, mink).values.item()
-        #rewards[(rewards < maxk) & (rewards > mink)] = 0    
+    def calc_relative_gain_rewards(self, rewards):
+        # assumes 2d rewards
+        for step in range(1, rewards.shape[1]):
+            rewards[:, step] = rewards[:, step-1]
+        return rewards[:, 1:]
 
+    def calc_cum_discounted_reward(self, rewards):
         # discounting
         running_add = torch.zeros([rewards.shape[0]])
         cum_disc_reward = torch.zeros([rewards.shape[0], self.option.max_step_length])
@@ -75,7 +74,12 @@ class Trainer():
             running_add = running_add.to(self.device)
             cum_disc_reward = cum_disc_reward.to(self.device)
 
-        cum_disc_reward[:, self.option.max_step_length - 1] = rewards
+        if len(rewards.shape) == 1:
+            cum_disc_reward[:, self.option.max_step_length - 1] = rewards
+        else:
+            assert (cum_disc_reward.shape == rewards.shape)
+            cum_disc_reward[:, :] = rewards
+
         for t in reversed(range(self.option.max_step_length)):
             running_add = self.option.gamma * running_add + cum_disc_reward[:, t]
             cum_disc_reward[:, t] = running_add
@@ -190,7 +194,15 @@ class Trainer():
                     self.positive_reward, self.negative_reward)
                 bert_loss = 0 
             elif self.option.reward == "context":
-                bert_loss, rewards, _ = self.agent.get_context_reward(state.get_context_path(), all_correct)
+                if self.option.full_reward:
+                    rewards_by_step = torch.zeros((state.n, self.option.max_step_length+1))
+                    for step in range(self.option.max_step_length):
+                        bert_loss, rewards, _ = self.agent.get_context_reward(state.get_context_path(), all_correct)
+                        rewards_by_step[:, step] = rewards
+                    # cut off the reward for a 0-step sequence
+                    rewards = self.calc_relative_gain_rewards(rewards_by_step)
+                else:
+                    bert_loss, rewards, _ = self.agent.get_context_reward(state.get_context_path(), all_correct)
                 if self.option.use_cuda:
                     rewards = rewards.to(self.device)
 
@@ -205,6 +217,7 @@ class Trainer():
             # final_reward = cum_discounted_reward - base_value
             
             #base_rewards = rewards #- base_value
+            rewards = self.normalize_rewards(rewards)
             cum_discounted_reward = self.calc_cum_discounted_reward(rewards).detach()            
             reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
             #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()

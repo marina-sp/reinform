@@ -103,9 +103,23 @@ class State:
         out[emerging_mask] = self.vocab.unk_token_id
         return out
 
-    def get_context_path(self, test_times=1):
+    def get_context_path(self, step=None, test_times=1):
+        """
+        Manage path construction appropriate for evalution with a path-scoring model.
+        h - r - t - context steps (h is the entity to be predicted)
+
+        :param step: int: How many of the selected actions (steps) to include in the output path. 0 means only query
+        :param test_times: int: the number of paths selected by beam for the same test query
+        :return: torch.tensor: with paths for every query triple
+        """
+        if step is None:
+            last_pos = -1
+        else:
+            # every step consists of two items in the path (rel and ent id)
+            last_pos = step * 2 + (2 if self.mode=="answer" else 3)
+
         if self.mode == "context":
-            return self.path
+            full_path = self.path
         else:
             # this lines is reached only in the test setting
             # - save top 1
@@ -116,7 +130,9 @@ class State:
             inv_queries = torch.tensor([
                 self.vocab.rel2inv[rel.item()] for rel in self.query_rel
             ])
-            return torch.cat((self.answer.view(-1, 1), inv_queries.view(-1, 1), sequences), -1)
+            full_path = torch.cat((self.answer.view(-1, 1), inv_queries.view(-1, 1), sequences), -1)
+
+        return full_path[:, :last_pos]
 
     def get_answer_path(self):
         assert self.mode == "answer"  # context evaluation of answer paths is impossible, sort it out

@@ -76,6 +76,7 @@ class Option:
         parser.add_argument('--bert_path', default='', type=str, help='Path to directory where the bert model is stored.')
         parser.add_argument('--load_config', default=False)
         parser.add_argument('--baseline', default='react', type=str)
+        parser.add_argument('--full_reward', default=False, type=bool)
 
         # Learning configuration
         parser.add_argument('--load_model', default='', type=str,
