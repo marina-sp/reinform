@@ -29,9 +29,10 @@ class Option:
             for line in f.readlines():
                 print(line.strip())
                 key, value = line.split(", ", 1)
-                if key not in ["action_embed_size", "random_agent", "tag", "this_expsdir", "use_cuda"]:
+                if key not in ["action_embed_size", "random_agent", "tag", "this_expsdir", "use_cuda", "random"]:
                     args.extend([f"--{key.strip()}", value.strip().replace("False", "")])
         print(args)
+        print("read the option")
         return cls.read_options(args)
 
     @classmethod
@@ -45,7 +46,7 @@ class Option:
         # Dataset
         parser.add_argument('--datadir', default="../datasets", type=str)
         parser.add_argument('--dataset', default="WN18RR-Inductive", type=str,
-                            choices=["freebase15k_237", "WN18_RR"])
+                            choices=["freebase15k_237", "WN18_RR", "WN18RR-Inductive"])
         parser.add_argument('--use_inverse', default=False, type=bool,
                             help='Set true to include inversed triples to the training.')
 
@@ -120,6 +121,7 @@ class Option:
         parser.add_argument('--mask_head', default=False, type=bool)
         parser.add_argument('--epsilon', default=0.0, type=float)
 
+        print("ready to parse the dict")
         if args is None:
             d = vars(parser.parse_args())
         else:
@@ -207,15 +209,17 @@ if __name__ == "__main__":
     meta = option.meta
     train_batch = option.train_batch
     reward, metric, bert_path = option.reward, option.metric, option.bert_path
-    coke_len, mask_head = option.coke_len, option.mask_head
+    mode, coke_len, mask_head = option.mode, option.coke_len, option.mask_head
     print(f"Load option? {option.load_option}") 
     if option.load_option != "":
         option = Option.load(os.path.join(option.exps_dir, option.load_option))
+        print("loaded")
         option.exp_name, option.load_model = exp_name, load_model
         option.meta = meta
         option.train_batch = train_batch
         option.reward, option.metric, option.bert_path = reward, metric, bert_path
         option.coke_len, option.mask_head = coke_len, mask_head
+        option.mode = mode
         option.finalize_option()
     option.save()
     print(option.__dict__)
