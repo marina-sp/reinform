@@ -61,8 +61,9 @@ class Trainer():
 
     def calc_relative_gain_rewards(self, rewards):
         # assumes 2d rewards
-        for step in range(1, rewards.shape[1]):
-            rewards[:, step] = rewards[:, step-1]
+        # iterate in reversed order
+        for step in range(1, rewards.shape[1]-1):
+            rewards[:, -step] -= rewards[:, -step-1]
         return rewards[:, 1:]
 
     def calc_cum_discounted_reward(self, rewards):
@@ -196,8 +197,8 @@ class Trainer():
             elif self.option.reward == "context":
                 if self.option.full_reward:
                     rewards_by_step = torch.zeros((state.n, self.option.max_step_length+1))
-                    for step in range(self.option.max_step_length):
-                        bert_loss, rewards, _ = self.agent.get_context_reward(state.get_context_path(), all_correct)
+                    for step in range(self.option.max_step_length+1):
+                        bert_loss, rewards, _ = self.agent.get_context_reward(state.get_context_path(step=step), all_correct)
                         rewards_by_step[:, step] = rewards
                     # cut off the reward for a 0-step sequence
                     rewards = self.calc_relative_gain_rewards(rewards_by_step)
@@ -236,7 +237,7 @@ class Trainer():
                     #if self.option.use_cuda:
                     #    self.agent.to(self.device)
 
-            reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, self.option.train_times)
+            reward_reshape = rewards.detach().cpu().numpy().reshape(self.option.batch_size, -1)
             reward_reshape = np.sum(reward_reshape>0.5, axis=1)  # [orig_batch]
             reward_reshape = (reward_reshape > 0)
             num_ep_correct = np.sum(reward_reshape)
