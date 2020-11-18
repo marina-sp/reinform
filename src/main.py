@@ -121,6 +121,9 @@ class Option:
         parser.add_argument('--coke_mode', default="pqa", type=str) # pqa, anchor, lp
         parser.add_argument('--mask_head', default=False, type=bool)
         parser.add_argument('--epsilon', default=0.0, type=float)
+        parser.add_argument('--use_coke_embed', default=False, type=bool)
+
+        parser.add_argument('--action_droprate', default=0.0, type=float)
 
         print("ready to parse the dict")
         if args is None:
@@ -164,6 +167,10 @@ class Option:
         else:
             self.random = False
 
+        
+        if self.use_coke_embed:
+            self.relation_embed_size = 256
+
         if self.use_entity_embed is False:
             self.action_embed_size = self.relation_embed_size
         else:
@@ -181,7 +188,7 @@ def main(option):
     trainer = Trainer(option, agent, data_loader)
 
     if option.load_model:
-        trainer.load_model(name='last', exp_name=option.load_model)
+        trainer.load_model(name='best', exp_name=option.load_model)
         option.load_model = ''
     if option.train_batch != 0:
         trainer.train()

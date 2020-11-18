@@ -32,6 +32,9 @@ class Agent(nn.Module):
                 self.path_scoring_model = CoKEWrapper(
                     self.option.coke_mode, self.data_loader.vocab.rel2inv,
                     self.option.dataset, self.option.coke_len, self.option.mask_head)
+
+                if option.use_coke_embed:
+                    self.item_embedding.weight.data[:] = torch.from_numpy(self.path_scoring_model.get_embeddings())
             else:
                 from BertWrapper import BertWrapper
                 # BUG: GPU memory overflow after Wrapper was introduced
@@ -135,7 +138,7 @@ class Agent(nn.Module):
         if step == 0:
             assert (current_entity == self.data_loader.vocab.unk_token_id).all()
         #assert (state.get_current_ent(hide=True) == state.get_current_ent()).all()
-        actions_id, hidden_actions_id = state.get_action_space(step)  # B x max_action x 2        
+        actions_id, hidden_actions_id = state.get_action_space(step, drop_actions=self.option.action_droprate)  # B x max_action x 2        
         #assert (actions_id == hidden_actions_id).all()
         hidden_actions_id = hidden_actions_id.to(self.device)
 
@@ -274,6 +277,12 @@ class Agent(nn.Module):
     def get_context_reward(self, sequences, all_correct, metric=1):
         
         # print("seq to reward: ", sequences)
+
+        # todo: move to State class 
+        # mask the query entity
+        sequences = sequences.clone()
+        sequences[:, 2] = self.data_loader.vocab.unk_token_id
+
         loss, scores = self.path_scoring_model.embed_path(sequences, use_labels=True)
 
         labels = sequences[:,0].numpy().reshape(-1)
@@ -293,7 +302,7 @@ class Agent(nn.Module):
         for i, label in enumerate(labels.tolist()):
             ranked = ranked_token_ids[i].tolist()
             ranked = [x for x in ranked if ((x not in all_correct[i]
-                                             and self.option.num_entity > x >= self.data_loader.vocab.reserved_vocab)
+                                             and self.data_loader.vocab.last_base_idx >= x >= self.data_loader.vocab.reserved_vocab)
                                             or x == label)]
             rank = ranked.index(label)
 

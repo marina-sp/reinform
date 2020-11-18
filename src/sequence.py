@@ -67,7 +67,7 @@ class State:
         return self.current_ent if not hide else self.hide_emerging(self.current_ent)
 
     def get_query_ent(self, do_rollout=False):
-        return self.query_ent if not do_rollout else self.query_rel.repeat_interleave(self.option.test_times, 0)
+        return self.query_ent if not do_rollout else self.query_ent.repeat_interleave(self.option.test_times, 0)
 
     def get_query_rel(self, do_rollout=False):
         return self.query_rel if not do_rollout else self.query_rel.repeat_interleave(self.option.test_times, 0)
@@ -166,7 +166,10 @@ class State:
         #    sequences[:, 0] = self.query_ent
         return sequences, triples
 
-    def get_action_space(self, step):
+    def get_action_space(self, step, drop_actions=0.0):
+        """
+        drop_actions: float: probability of masking an action. Do not mask per default.
+        """
         # start entities never come with rollouts, but current entities do: roll out for
         assert len(self.current_ent) % len(self.query_ent) == 0
         if not self.is_first_step():
@@ -182,6 +185,11 @@ class State:
 
         action_space = self.graph.get_out(
             self.current_ent, query_ent, query_rel, answer, all_correct, step)
+
+        if drop_actions != 0:
+            dropout_mask = torch.bernoulli(torch.ones_like(action_space[:,:,0]), self.option.action_droprate).long()   
+            dropout_mask = torch.stack((dropout_mask, dropout_mask), dim=-1)
+            action_space[dropout_mask == 1] = self.vocab.pad_token_id
 
         # actions to emerging ents have been already padded in the graph
         assert (action_space == self.hide_emerging(action_space)).all()
