@@ -55,8 +55,10 @@ class Trainer():
         # print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
         rewards = torch.div(reward_by_episode - reward_mean, reward_std)
         rewards = rewards.reshape(out)
+
+        last_rewards = reward_by_episode[:, out[1]-1::out[1]] if len(out) == 2 else rewards_by_episode # drop intermediate rewards
         print("mean interval of rewards by episode: ",
-              torch.mean(reward_by_episode.max(dim=-1)[0] - reward_by_episode.min(dim=-1)[0]))
+                torch.mean(last_rewards.max(dim=-1)[0] - last_rewards.min(dim=-1)[0]))
         return rewards
 
     def calc_relative_gain_rewards(self, rewards):
@@ -64,7 +66,7 @@ class Trainer():
         # iterate in reversed order
         for step in range(1, rewards.shape[1]-1):
             rewards[:, -step] -= rewards[:, -step-1]
-        return rewards[:, 1:]
+        return rewards ## for zero step take  [:, 1:]
 
     def calc_cum_discounted_reward(self, rewards):
         # discounting
@@ -196,10 +198,10 @@ class Trainer():
                 bert_loss = 0 
             elif self.option.reward == "context":
                 if self.option.full_reward:
-                    rewards_by_step = torch.zeros((state.n, self.option.max_step_length+1))
-                    for step in range(self.option.max_step_length+1):
+                    rewards_by_step = torch.zeros((state.n, self.option.max_step_length))  # +1 for a zero step
+                    for step in range(1,self.option.max_step_length+1):  # range from 0 for 0 step
                         bert_loss, rewards, _ = self.agent.get_context_reward(state.get_context_path(step=step), all_correct)
-                        rewards_by_step[:, step] = rewards
+                        rewards_by_step[:, step-1] = rewards
                     # cut off the reward for a 0-step sequence
                     rewards = self.calc_relative_gain_rewards(rewards_by_step)
                 else:

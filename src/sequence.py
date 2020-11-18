@@ -113,7 +113,7 @@ class State:
         :return: torch.tensor: with paths for every query triple
         """
         if step is None:
-            last_pos = -1
+            last_pos = self.steps
         else:
             # every step consists of two items in the path (rel and ent id)
             last_pos = step * 2 + (2 if self.mode=="answer" else 3)

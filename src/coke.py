@@ -16,7 +16,6 @@ import torch
 sys.path.extend(["../../coke/CoKE/bin"])
 
 from reader.coke_reader import KBCDataReader
-from reader.coke_reader import PathqueryTensorReader
 from model.coke import CoKEModel
 from optimization import optimization
 # from evaluation import kbc_evaluation
@@ -41,7 +40,6 @@ import paddle
 import paddle.fluid as fluid
 
 from reader.coke_reader import KBCDataReader
-from reader.coke_reader import PathqueryDataReader
 from model.coke import CoKEModel
 from optimization import optimization
 #from evaluation import kbc_evaluation
@@ -78,12 +76,14 @@ def create_model(pyreader_name, coke_config, args):
     loss, fc_out = coke.get_pretraining_output(mask_label=mask_labels, mask_pos=mask_positions)
     if args.use_fp16 and args.loss_scaling > 1.0:
         loss = loss * args.loss_scaling
+    
+    embs = coke.get_embeddings()
 
     batch_ones = fluid.layers.fill_constant_batch_size_like(
         input=mask_labels, dtype='int64', shape=[1], value=1)
     num_seqs = fluid.layers.reduce_sum(input=batch_ones)
 
-    return pyreader, loss, fc_out, num_seqs
+    return embs, pyreader, loss, fc_out, num_seqs
 
 
 ## MODEL SETUP ##
@@ -190,7 +190,7 @@ class CoKEWrapper:
             self.args.vocab_size = 39986
             
             if max_len == -1:
-                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_16000"
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_26000"
                 max_len = 7
             elif max_len == 5:
                 self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths_len3/models/step_6598"
@@ -233,7 +233,7 @@ class CoKEWrapper:
         self.test_prog = fluid.Program()
         with fluid.program_guard(self.test_prog, startup_prog):
             with fluid.unique_name.guard():
-                self.test_pyreader, _, self.fc_out, num_seqs = create_model(
+                self.embs, self.test_pyreader, _, self.fc_out, num_seqs = create_model(
                     pyreader_name='test_reader',
                     coke_config=coke_config,
                     args=self.args)
@@ -246,7 +246,30 @@ class CoKEWrapper:
         self.test_prog = self.test_prog.clone(for_test=True)
 
         self.exe.run(startup_prog)
-        init_predict_checkpoint(self.args, self.exe, startup_prog)
+        init_predict_checkpoint(self.args, self.exe, startup_prog)    
+
+    ### GET EMBEDDING ###
+
+    def get_embeddings(self):
+        # fill data with idx of all elements of the vocab via one element sequences
+        data = torch.tensor([[0, i, 0] for i in range(self.args.vocab_size)])  # add pad idx for both possible masked positions
+        test_data_reader = self.get_data_reader(data, is_training=False, epoch=1, shuffle=False, dev_count=self.dev_count,
+                                                vocab_size=self.args.vocab_size)
+        self.test_pyreader.decorate_tensor_provider(test_data_reader.data_generator())
+
+        embeddings_all = []
+
+        self.test_pyreader.start()
+        while True:
+            try:
+                # note: return a numpy array
+                embeddings_all.append(self.exe.run(fetch_list=[self.embs.name], program=self.test_prog)[0])
+            except fluid.core.EOFException:
+                self.test_pyreader.reset()
+                break
+        out = np.concatenate(embeddings_all, axis=0)
+        print(out.shape)
+        return out
 
     ### ACTUAL BATCH PREDICTION ###
 
@@ -345,3 +368,60 @@ class CoKEWrapper:
         assert scores_np.shape[0] == sequences.shape[0]
         #assert scores_np.shape[1] == self.item_embedding.num_embeddings ## item embedding has extra "out of bert" tokens in kg_rl.py
         return 0, torch.from_numpy(scores_np)
+
+
+def convert_ids_to_ids(target_vocab, source_vocab, tokens):
+    """Converts a sequence of tokens into ids using the vocab."""
+    output = []
+    for item in tokens:
+        output.append(target_vocab[source_vocab[item]])
+    return output
+
+RawExample = collections.namedtuple("RawExample", ["token_ids", "mask_type"])
+
+class PathqueryTensorReader(KBCDataReader):
+    def __init__(self,
+                 vocab_path,
+                 data,
+                 external_vocab_path=None,
+                 max_seq_len=3,
+                 batch_size=4096,
+                 is_training=True,
+                 shuffle=True,
+                 dev_count=1,
+                 epoch=10,
+                 vocab_size=-1,
+                 mask_head=True):
+        self.mask_type = "MASK_HEAD" if mask_head else "MASK_TAIL"
+        if external_vocab_path is not None:
+            self.source_vocab = {v:k for k,v in load_vocab(external_vocab_path).items()}
+        else:
+            self.source_vocab = None
+        KBCDataReader.__init__(self, vocab_path, data, max_seq_len,
+                               batch_size, is_training, shuffle, dev_count,
+                               epoch, vocab_size)
+
+
+    def read_example(self, input_data):
+        """Translate from other encoding to the model vocab"""
+        examples = []
+        for ids_source in input_data:
+            assert len(ids_source) <= (self.max_seq_len + 1), \
+                "Expecting at most [max_seq_len + 1]=%d tokens each line, current tokens %d" \
+                % (self.max_seq_len + 1, len(ids_source))
+            if self.source_vocab is not None:
+                ids_target = convert_ids_to_ids(self.vocab, self.source_vocab, ids_source)
+            else:
+                ids_target = ids_source
+
+            if len(ids_target) <= 0:
+                continue
+            examples.append(
+                RawExample(
+                    token_ids=ids_target, mask_type=self.mask_type)) # MASK_TYPES: "MASK_HEAD" or "MASK_TAIL"
+            # if len(examples) <= 10:
+            #     logger.info("*** Example ***")
+            #     logger.info("tokens: %s" % " ".join([printable_text(x) for x in tokens]))
+            #     logger.info("token_ids: %s" % " ".join([str(x) for x in token_ids]))
+        return examples
+
