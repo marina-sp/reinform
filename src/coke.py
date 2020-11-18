@@ -190,7 +190,7 @@ class CoKEWrapper:
             self.args.vocab_size = 39986
             
             if max_len == -1:
-                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_26000"
+                self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths/models/step_16000"
                 max_len = 7
             elif max_len == 5:
                 self.args.init_checkpoint = "../../coke/CoKE/output/output_wn18rr-ind_paths_len3/models/step_6598"
@@ -267,7 +267,11 @@ class CoKEWrapper:
             except fluid.core.EOFException:
                 self.test_pyreader.reset()
                 break
+        # collect all embedded *sequences*
         out = np.concatenate(embeddings_all, axis=0)
+
+        # extract relevant position
+        out = out[:, 1]
         print(out.shape)
         return out
 
