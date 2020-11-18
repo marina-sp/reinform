@@ -237,19 +237,28 @@ class DataLoader:
     ### ACCESS THE DATA ###
     def get_data(self, data, include_inverse=True):
         if data == "test":
-            out = self.data["inv_test"]
+            # always use inverse only - allow this line
+            out = self.data[f"inv_{data}"]
         else:
             out = self.data[data] + self.data[f'inv_{data}'] if include_inverse else self.data[data]
         return np.array(out, dtype=np.int64)
 
     def get_base_graph_data(self):
-        return np.array(self.data['train'] + self.data['inv_train'], dtype=np.int64)
+        mask_elems = [1] * (len(self.data["train"]) // 2)
+        mask_elems = mask_elems + [0] * (len(self.data["train"]) - len(mask_elems))
+        half_mask = np.array(mask_elems, dtype=np.bool)
+        np.random.shuffle(half_mask)
+        mask = np.concatenate((half_mask, ~half_mask))
+        full = np.array(self.data['train'] + self.data['inv_train'], dtype=np.int64)
+        assert len(mask) == len(full)
+        self.base_data = full  # np.array(self.data["inv_train"], dtype=np.int64)
+        return self.base_data # full[mask]
 
     def get_extended_graph_data(self):
         print(self.get_base_graph_data().shape)
         print(np.array(self.data['aux'] + self.data['inv_aux']).shape)
         return np.concatenate([
-            self.get_base_graph_data(),
+            self.base_data, #self.get_base_graph_data(),
             np.array(self.data['aux'] + self.data['inv_aux'], dtype=np.int64)],
             axis=0
         )
