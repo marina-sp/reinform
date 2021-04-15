@@ -17,7 +17,7 @@ class Trainer():
         self.test_graph.update_all_correct(self.data_loader.get_data('valid'))
         self.test_graph.update_all_correct(self.data_loader.get_data('test'))
         assert(self.graph != self.test_graph)
-        self.train_data = 'valid'
+        self.train_data = 'train'
         self.valid_data = 'valid'
         self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data(self.valid_data)), size=len(self.data_loader.get_data(self.valid_data)))
 
@@ -49,7 +49,7 @@ class Trainer():
         reward_mean = torch.mean(reward_by_episode, 1, keepdim=True)
         reward_std = torch.std(reward_by_episode, 1, keepdim=True) + 1e-6
         #print(reward_by_episode.shape, reward_mean.shape, reward_std.shape)
-        rewards = torch.div(reward_by_episode - reward_mean, reward_std).flatten() #.clamp_min_(0).flatten()
+        rewards = torch.div(reward_by_episode - reward_mean, reward_std).flatten().clamp_min_(0)
         print("mean interval of rewards by episode: ", torch.mean(reward_by_episode.max(dim=-1)[0] - reward_by_episode.min(dim=-1)[0]))
         #print(rewards.mean(-1))
         #base_rewards = rewards.reshape(-1)
@@ -89,6 +89,7 @@ class Trainer():
     def calc_reinforce_loss(self, all_loss, all_logits, final_reward):
 
         loss = torch.stack(all_loss, dim=1)  # [B, T]
+        
         #base_value = self.baseline.get_baseline_value()
         #final_reward = reward - base_value
         #self.baseline.update(reward.mean())

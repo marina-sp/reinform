@@ -78,9 +78,9 @@ class Agent(nn.Module):
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
-            if option.mode.startswith("coke") or True:  ## hardcode to use CoKE
-                self.path_scoring_model = CoKEWrapper(self.option.coke_mode, self.option.dataset, 
-                        self.option.coke_len, self.option.mask_head)
+            if option.mode.startswith("coke"):  ## hardcode to use CoKE
+                self.path_scoring_model = CoKEWrapper(self.option.coke_mode, self.option.coke_config, self.option.coke_model,
+                        self.option.dataset, self.option.coke_len, self.option.mask_head)
                 self.embed_path = self.embed_coke_path
             else:
                 self.embed_path = self.embed_bert_path
@@ -382,7 +382,7 @@ class Agent(nn.Module):
 
         labels = sequences[:,0].numpy().reshape(-1)
         #print(scores.shape)
-        prediction_prob = scores.log_softmax(dim=-1)  #.detach().numpy()  # B x n_actions
+        prediction_prob = scores.softmax(dim=-1)  #.detach().numpy()  # B x n_actions
         
         #print(prediction_prob.shape)
         rewards_prob = prediction_prob[np.arange(prediction_prob.shape[0]), labels] # B x 1

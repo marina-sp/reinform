@@ -15,6 +15,7 @@ import paddle.fluid as fluid
 sys.path.extend(["../../coke/CoKE/bin"])
 
 from reader.coke_reader import KBCDataReader
+from reader.coke_reader import PathqueryDataReader
 from reader.coke_reader import PathqueryTensorReader
 from model.coke import CoKEModel
 from optimization import optimization
@@ -35,21 +36,6 @@ logging.basicConfig(
 logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
-import numpy as np
-import paddle
-import paddle.fluid as fluid
-
-from reader.coke_reader import KBCDataReader
-from reader.coke_reader import PathqueryDataReader
-from model.coke import CoKEModel
-from optimization import optimization
-#from evaluation import kbc_evaluation
-from evaluation import kbc_batch_evaluation
-from evaluation import compute_kbc_metrics
-from evaluation import pathquery_batch_evaluation
-from evaluation import compute_pathquery_metrics
-from utils.args import ArgumentGroup, print_arguments
-from utils.init import init_pretraining_params, init_checkpoint
 
 def create_model(pyreader_name, coke_config, args):
     pyreader = fluid.layers.py_reader\
@@ -87,22 +73,24 @@ def create_model(pyreader_name, coke_config, args):
 
 ## MODEL SETUP ##
 class CoKEWrapper:
-    def __init__(self, coke_mode, dataset='wn', max_len=-1, mask_head=False):
+    def __init__(self, coke_mode, coke_config, coke_model, dataset='wn', max_len=-1, mask_head=False):
         super().__init__()
 
         # how sequences are formed on the input
         self.mask_head = mask_head
 
-        if dataset.lower().startswith("w"):
-            if max_len == -1:   
-                config_name = "pathqueryWN18RR_config"
-            elif max_len in [4,5,6]:
-                config_name = f"pathqueryWN18RR_len{max_len - 2}_config"
-            #config_name = "pathqueryWN18RR_lp_len3_128dim_config"
-        else:
-            config_name = "pathqueryFB237_config"
+        #f dataset.lower().startswith("w"):
+        #   if max_len == -1:   
+        #       config_name = "pathqueryWN18RR_config"
+        #   elif max_len in [4,5,6]:
+        #       config_name = f"pathqueryWN18RR_len{max_len - 2}_config"
+        #   #config_name = "pathqueryWN18RR_lp_len3_128dim_config"
+        #lse:
+        #   config_name = "pathqueryFB237_config"
  
-        config_file = f"../../coke/CoKE/configs/{config_name}.sh"
+        #onfig_file = f"../../coke/CoKE/configs/{config_name}.sh"
+
+        config_file = coke_config
         # read CoKE config
         with open(config_file, "r") as f:
             content = f.read()
@@ -177,7 +165,7 @@ class CoKEWrapper:
         self.args.do_train = False
         
         if coke_mode != "pqa":
-            mask_head = False
+            self.mask_head = False
 
         # todo: fix config loading (hardcode)
         if dataset.lower().startswith("w"):
@@ -211,6 +199,8 @@ class CoKEWrapper:
                 max_len = 7
             elif max_len in [4,6]:
                 self.args.init_checkpoint = f"../../coke/CoKE/output/output_fb15k237_paths_len{max_len-2}/models/step_106294"     
+        
+        self.args.init_checkpoint = coke_model
         self.args.use_cuda = True
         self.args.max_seq_len = max_len
         self.args.max_position_embeddings = max_len
@@ -301,7 +291,7 @@ class CoKEWrapper:
         Reader = PathqueryTensorReader
         data_reader = Reader(
             vocab_path=self.args.vocab_path,
-            data=batch_tensor,
+            data_path=batch_tensor,
             max_seq_len=self.args.max_seq_len,
             batch_size=self.args.batch_size,
             is_training=is_training,

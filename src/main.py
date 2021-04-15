@@ -117,6 +117,8 @@ class Option:
         # coke
         parser.add_argument('--coke_len', default=7, type=int)
         parser.add_argument('--coke_mode', default="pqa", type=str) # pqa, anchor, lp
+        parser.add_argument('--coke_config', type=str)
+        parser.add_argument('--coke_model', type=str)
         parser.add_argument('--mask_head', default=False, type=bool)
         parser.add_argument('--epsilon', default=0.0, type=float)
 
