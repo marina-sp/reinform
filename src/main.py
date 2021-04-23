@@ -167,8 +167,14 @@ class Option:
             self.action_embed_size = self.relation_embed_size
         else:
             self.action_embed_size = self.relation_embed_size * 2  ## todo: allow different sizes via separate vocab
-        
-        self.train_layers = [int(l) for l in self.train_layers if l in "0123456789"]
+
+        if self.train_layers == "":
+            self.train_layers = []
+        elif self.train_layers == "all":
+            self.train_layers = "all"
+        else:
+            # parse layers
+            self.train_layers = [int(l) for l in self.train_layers if l in "0123456789"]
 
 def main(option):
     log.basicConfig(level=log.INFO)
