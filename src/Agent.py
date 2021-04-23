@@ -157,7 +157,7 @@ class Agent(nn.Module):
 
         # flip to make tail prediction
         if self.option.mask_head:
-            coke_seq = torch.cat([e0, rel, e1], dim=-1)
+            coke_seq = torch.cat([e0, qr, e1], dim=-1)
         else:
             rel_flip = torch.LongTensor([[self.data_loader.kg.rel2inv[r.item()] if r.item() not in [0,3]  else r.item() for r in r_seq] for r_seq in path_rel.flip(-1)])
             qr_flip = torch.LongTensor([[self.data_loader.kg.rel2inv[r.item()]] for r in qr])

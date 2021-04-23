@@ -21,14 +21,23 @@ class Trainer():
         self.valid_data = 'valid'
         self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data(self.valid_data)), size=len(self.data_loader.get_data(self.valid_data)))
 
-        # train bert with smaller rate
-        self.optimizer = torch.optim.Adam([
-                {'params': self.agent.non_bert_parameters},
-                #{'params': self.agent.path_scoring_model.parameters(), 'lr': self.option.bert_lr}
-            ],
-            lr=self.option.learning_rate)#, weight_decay=0.0001)
-        self.positive_reward = torch.tensor(1.)
-        self.negative_reward = torch.tensor(0.)
+        if self.option.train_layers:
+            # train bert with smaller rate
+            self.optimizer = torch.optim.Adam([
+                    {'params': self.agent.non_bert_parameters},
+                    {'params': self.agent.path_scoring_model.parameters(), 'lr': self.option.bert_lr}
+                ],
+                lr=self.option.learning_rate)#, weight_decay=0.0001)
+        else:
+            # train only the agent
+            self.optimizer = torch.optim.Adam(
+                self.agent.non_bert_parameters,
+                lr=self.option.learning_rate)
+
+        if self.option.reward == "answer" or self.option.metric == "answer":
+            self.positive_reward = torch.tensor(1.)
+            self.negative_reward = torch.tensor(0.)
+            
         #self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[20,1000], gamma=0.5)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.5, min_lr=1e-1, verbose=True, patience=100, mode="max")
 
