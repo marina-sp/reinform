@@ -123,7 +123,8 @@ class Agent(nn.Module):
             if self.option.load_config:
                 # activate everything for training from scratch
                 par.requires_grad_(True)
-            if any([f'layer.{id}' in name for id in self.option.train_layers]) or 'cls' in name and self.option.train_layers != []:
+                print(f"Layer {name} - activate training")
+            elif any([f'layer.{id}' in name for id in self.option.train_layers]) or 'cls' in name and self.option.train_layers != []:
                 # activate only layers listed for finetuning
                 par.requires_grad_(True)
                 print(f"Layer {name} - activate training")
