@@ -1,3 +1,6 @@
+Forked from https://github.com/ty4b112/pytorch_MINERVA
+
+
 # pytorch_MINERVA
 This is the code for the paper [Go for a Walk and Arrive at the Answer - Reasoning over Paths in Knowledge Bases using Reinforcement Learning](https://arxiv.org/abs/1711.05851) in pytorch version.
 
