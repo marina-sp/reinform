@@ -78,7 +78,7 @@ class Agent(nn.Module):
 
         # load bert if neccessary during training or evaluation
         if (option.reward == "context") or (option.metric == "context"):
-            if option.mode.startswith("coke"):  ## hardcode to use CoKE
+            if option.mode.startswith("coke") or True: # hardcode to use CoKE
                 self.path_scoring_model = CoKEWrapper(self.option.coke_mode, self.option.coke_config, self.option.coke_model,
                         self.option.dataset, self.option.coke_len, self.option.mask_head)
                 self.embed_path = self.embed_coke_path

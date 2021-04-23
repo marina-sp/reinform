@@ -205,20 +205,19 @@ if __name__ == "__main__":
     option = Option.read_options()
     option.finalize_option()
     print(option.load_model, option.load_option, option.exp_name)
-    exp_name, load_model = option.exp_name, option.load_model
-    meta = option.meta
-    train_batch = option.train_batch
-    reward, metric, bert_path = option.reward, option.metric, option.bert_path
-    coke_len, mask_head = option.coke_len, option.mask_head
     print(f"Load option? {option.load_option}") 
     if option.load_option != "":
-        option = Option.load(os.path.join(option.exps_dir, option.load_option))
-        option.exp_name, option.load_model = exp_name, load_model
-        option.meta = meta
-        option.train_batch = train_batch
-        option.reward, option.metric, option.bert_path = reward, metric, bert_path
-        option.coke_len, option.mask_head = coke_len, mask_head
-        option.finalize_option()
+        new_option = Option.load(os.path.join(option.exps_dir, option.load_option))
+        new_option.exp_name, new_option.load_model = option.exp_name, option.load_model
+        new_option.meta = option.meta
+        new_option.train_batch, new_option.batch_size, new_option.test_batch_size = option.train_batch, option.batch_size, option.test_batch_size
+        new_option.reward, new_option.metric, new_option.bert_path = option.reward, option.metric, option.bert_path
+        new_option.coke_len, new_option.mask_head = option.coke_len, option.mask_head
+        new_option.coke_config, new_option.coke_model = option.coke_config, option.coke_model 
+        new_option.mode = option.mode
+        new_option.train_times = option.train_times
+        new_option.finalize_option()
+        option = new_option
     option.save()
     print(option.__dict__)
 
