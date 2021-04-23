@@ -238,8 +238,8 @@ class Trainer():
             avg_ep_correct = num_ep_correct / self.option.batch_size
 
             print_loss = 0.9 * print_loss + 0.1 * reinforce_loss.item()
-            print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean()
-            print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean()
+            print_rewards = 0.9 * print_rewards + 0.1 * rewards.mean().item()
+            print_act_loss = 0.9 * print_act_loss + 0.1 * torch.stack(all_loss).mean().item()
             log.info("{:3.0f} sliding reward: {:2.3f}\t red reward: {:2.3f}\t valid mrr: {:2.3f}\t sliding act loss: {:3.3f}\t sliding reinforce loss: {:3.3f}"
                      .format(batch_counter, print_rewards, cum_discounted_reward.mean(), valid_mrr,
                               print_act_loss, print_loss))

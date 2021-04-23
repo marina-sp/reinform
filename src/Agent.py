@@ -118,7 +118,7 @@ class Agent(nn.Module):
         torch.nn.init.xavier_uniform_(self.item_embedding.weight.data)
 
     def make_bert_trainable(self):
-        self.path_scoring_model.train(self.option.train_layers or self.load_config)
+        self.path_scoring_model.train(self.option.train_layers or self.option.load_config)
         for name, par in self.path_scoring_model.named_parameters():
             if self.option.load_config:
                 # activate everything for training from scratch
