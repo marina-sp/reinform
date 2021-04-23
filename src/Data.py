@@ -16,6 +16,7 @@ class Data_loader():
         self.kg.prepare_data()
         self.kg.add_reversed_relations()
         self.kg.add_extra_relations()
+        print(self.kg.rel2inv)
 
         self.load_mappings()
         self.load_data_all(data_path)
@@ -26,6 +27,7 @@ class Data_loader():
         self.num2relation[self.kg.unk_token_id] = "NO_OP"
         self.num2relation[self.kg.pad_token_id] = "PAD"
         self.num2entity[self.kg.pad_token_id] = "PAD"
+        self.num2entity[self.kg.unk_token_id] = "UNK"
         # self._augment_reverse_relation()
         # self._add_item(self.relation2num, self.num2relation, "Equal")
         # self._add_item(self.relation2num, self.num2relation, "Pad")
@@ -82,8 +84,8 @@ class Data_loader():
         assert np.array(hrt)[:,1].max() < np.array(trh)[:,1].min()  # indices of inverse relations must be higher
         return (hrt, trh)
 
-    def get_data(self, data):
-        if data == 'train':
+    def get_data(self, data, mode='eval'):
+        if mode == 'train':
             out = self.data[data] + self.data[f'inv_{data}'] if self.include_reverse else self.data[data]
         else:
             out = self.data[data] + self.data[f'inv_{data}']  

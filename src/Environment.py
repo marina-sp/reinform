@@ -4,13 +4,14 @@ from tqdm import tqdm
 
 
 class Environment():
-    def __init__(self, option, graph, data, mode="train"):
+    def __init__(self, option, graph, data, mode="train", all_idx=None):
         self.mode = mode
         self.graph = graph
         self.option = option
         self.data_array = torch.from_numpy(data)
 
         self.random_state = np.random.RandomState(self.option.random_seed)
+        self.all_idx = all_idx
 
 
     def get_next_batch(self, n=None):
@@ -51,12 +52,15 @@ class Environment():
         n_batches = (test_data_count-1) // self.option.test_batch_size + 1 if not n else n
         # shuffle if short
         if n:
-            all_idx = self.random_state.randint(0, len(self.data_array), size=len(self.data_array))
-            self.data_array = self.data_array[all_idx, :]
+            if self.all_idx is None:
+                self.all_idx = self.random_state.randint(0, len(self.data_array), size=len(self.data_array))
+            self.data_array = self.data_array[self.all_idx, :]
 
-        bar = tqdm(total=n_batches)
+        if not n:
+            bar = tqdm(total=n_batches)
         for _ in range(n_batches):
-            bar.update()
+            if not n:
+                bar.update()
             if current_idx == test_data_count:
                 return
             if test_data_count - current_idx > self.option.test_batch_size:
