@@ -21,7 +21,8 @@ class Trainer():
         self.valid_data = 'valid'
         self.valid_idx = np.random.RandomState(self.option.random_seed).randint(0, len(self.data_loader.get_data(self.valid_data)), size=len(self.data_loader.get_data(self.valid_data)))
 
-        if self.option.train_layers:
+        # if finetuning or training from scratch, add bert parameters to optimizer
+        if self.option.train_layers or self.option.load_config:
             # train bert with smaller rate
             self.optimizer = torch.optim.Adam([
                     {'params': self.agent.non_bert_parameters},
@@ -225,7 +226,7 @@ class Trainer():
             reinforce_loss, norm_reward = self.calc_reinforce_loss(all_loss, all_logits, cum_discounted_reward)
             #bert_loss = -(rewards.log() * base_rewards.clamp_min(0).detach()).mean()
             
-            reinforce_loss += self.option.bert_rate * bert_loss# * base_rewards.detach().mean().clamp_min(0)
+            reinforce_loss += self.option.bert_rate * bert_loss  # * base_rewards.detach().mean().clamp_min(0)
 
             if np.isnan(reinforce_loss.detach().cpu().numpy()):
                 raise ArithmeticError("Error in computing loss")

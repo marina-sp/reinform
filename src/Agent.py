@@ -120,7 +120,11 @@ class Agent(nn.Module):
     def make_bert_trainable(self):
         self.path_scoring_model.train(self.option.train_layers == [])
         for name, par in self.path_scoring_model.named_parameters():
+            if self.option.load_config:
+                # activate everything for training from scratch
+                par.requires_grad_(True)
             if any([f'layer.{id}' in name for id in self.option.train_layers]) or 'cls' in name and self.option.train_layers != []:
+                # activate only layers listed for finetuning
                 par.requires_grad_(True)
                 print(f"Layer {name} - activate training")
             else:
