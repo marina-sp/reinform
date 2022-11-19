@@ -3,120 +3,97 @@ from collections import defaultdict
 import numpy as np
 import copy
 
+from kg_rl import *
 
 class Data_loader():
     def __init__(self, option):
         self.option = option
-        self.include_reverse = True
-
-        self.train_data = None
-        self.test_data = None
-        self.valid_data = None
-
-        self.entity2num = None
-        self.num2entity = None
-
-        self.relation2num = None
-        self.num2relation = None
-        self.relation2inv = None
-
-        self.num_relation = 0
-        self.num_entity = 0
-        self.num_operator = 0
+        self.include_reverse = option.use_inverse
 
         data_path = os.path.join(self.option.datadir, self.option.dataset)
+
+        self.kg = CustomKG(dataset=self.option.dataset) # "freebase15k_237" "WN18_RR"
+        self.kg.prepare_data()
+        self.kg.add_reversed_relations()
+        self.kg.add_extra_relations()
+        print(self.kg.rel2inv)
+
+        self.load_mappings()
         self.load_data_all(data_path)
 
-    def load_data_all(self, path):
-        train_data_path = os.path.join(path, "train.txt")
-        test_data_path = os.path.join(path, "test.txt")
-        valid_data_path = os.path.join(path, "valid.txt")
-        entity_path = os.path.join(path, "entities.txt")
-        relations_path = os.path.join(path, "relations.txt")
-
-        self.entity2num, self.num2entity = self._load_dict(entity_path)
-        self.relation2num, self.num2relation = self._load_dict(relations_path)
-        self._augment_reverse_relation()
-        self._add_item(self.relation2num, self.num2relation, "Equal")
-        self._add_item(self.relation2num, self.num2relation, "Pad")
-        self._add_item(self.relation2num, self.num2relation, "Start")
-        self._add_item(self.entity2num, self.num2entity, "Pad")
-        print(self.relation2num)
+    def load_mappings(self):
+        self.entity2num, self.num2entity = self.kg.entity2idx, self.kg.idx2entity
+        self.relation2num, self.num2relation = self.kg.relation2idx, self.kg.idx2relation
+        self.num2relation[self.kg.unk_token_id] = "NO_OP"
+        self.num2relation[self.kg.pad_token_id] = "PAD"
+        self.num2entity[self.kg.pad_token_id] = "PAD"
+        self.num2entity[self.kg.unk_token_id] = "UNK"
+        # self._augment_reverse_relation()
+        # self._add_item(self.relation2num, self.num2relation, "Equal")
+        # self._add_item(self.relation2num, self.num2relation, "Pad")
+        # self._add_item(self.relation2num, self.num2relation, "Start")
+        # self._add_item(self.entity2num, self.num2entity, "Pad")
+        # print(self.relation2num)
 
         self.num_relation = len(self.relation2num)
-        self.num_entity = len(self.entity2num)
+        self.num_entity = len(self.entity2num) + self.kg.reserved_vocab
         print("num_relation", self.num_relation)
-        print("num_entity", self.num_entity)
+        print("num_entity", self.num_entity - self.kg.reserved_vocab)
 
-        self.train_data = self._load_data(train_data_path)
-        self.valid_data = self._load_data(valid_data_path)
-        self.test_data = self._load_data(test_data_path)
+    ## finilize for different relations and entity embedding sizes
+    #     # map joint Transformer indices for relations and entities to separate mappings
+    #     self.mixed2ent = {v: i for i, v in enumerate(self.kg.entity2idx.values())}
+    #     self.ent2mixed = {v: k for k, v in self.mixed2ent.items()}
+    #     # include reserved relations
+    #     self.mixed2rel = {v: i for i, v in enumerate(self.kg.entity2idx.values())}
+    #     self.rel2mixed = {v: k for k, v in self.mixed2rel.items()}
+    #     # add pad token mapping
+    #     self._add_item(self.mixed2rel, self.rel2mixed, 0)
+    #
+    #     # include reserved tokens for embedding
+    #     self.num_relation = len(self.mixed2ent)
+    #     self.num_entity = len(self.mixed2rel)
+    #     # print data stats without reserved tokens
+    #     print("num_relation", self.num_relation)
+    #     print("num_entity", self.num_entity)
+    #
+    #     # assert len(self.entity2num) == len(self.num2entity)
+    #     # assert len(self.relation2num) == len(self.num2relation)
+    #
+    # def _add_item(self, obj2num, num2obj, item):
+    #     count = len(obj2num)
+    #     obj2num[item] = count
+    #     num2obj[count] = item
+    #
+    #
 
-    def _load_data(self, path):
-        data = [l.strip().split("\t") for l in open(path, "r").readlines()]
-        triplets = list()
-        for item in data:
-            head = self.entity2num[item[0]]
-            tail = self.entity2num[item[2]]
-            relation = self.relation2num[item[1]]
-            triplets.append([head, relation, tail])
-            if self.include_reverse:
-                inv_relation = self.relation2num["inv_" + item[1]]
-                triplets.append([tail, inv_relation, head])
-        return triplets
+    def load_data_all(self, path):
+        self.data = {}
 
-    def _load_ddd(self, path):
-        data = [l.strip().split("\t") for l in open(path, "r").readlines()]
-        triplets = list()
-        for item in data:
-            head = self.entity2num[item[0]]
-            tail = self.entity2num[item[2]]
-            relation = self.relation2num[item[1]]
-            triplets.append([head, relation, tail])
-        return triplets
+        self.data['train'], self.data['inv_train'] = self.load_data("train")
+        self.data['valid'], self.data['inv_valid'] = self.load_data("valid")
+        self.data['test'],  self.data['inv_test']  = self.load_data("test")
 
-    def _load_dict(self, path):
-        obj2num = defaultdict(int)
-        num2obj = defaultdict(str)
-        data = [l.strip() for l in open(path, "r").readlines()]
-        for num, obj in enumerate(data):
-            obj2num[obj] = num
-            num2obj[num] = obj
-        return obj2num, num2obj
 
-    def _augment_reverse_relation(self):
-        num_relation = len(self.num2relation)
-        temp = list(self.num2relation.items())
-        self.relation2inv = defaultdict(int)
-        for n, r in temp:
-            rel = "inv_" + r
-            num = num_relation + n
-            self.relation2num[rel] = num
-            self.num2relation[num] = rel
-            self.relation2inv[n] = num
-            self.relation2inv[num] = n
+    def load_data(self, data):
+        ## inversed triplets in kg are added last
+        split = len(self.kg.triplets[data]) // 2
+        assert split * 2 == len(self.kg.triplets[data])
+        hrt = [[t.h, t.r, t.t, self.kg.rel2inv[t.r]] for t in self.kg.triplets[data][:split]]
+        trh = [[t.h, t.r, t.t, self.kg.rel2inv[t.r]] for t in self.kg.triplets[data][split:]]
+        assert np.array(hrt)[:,1].max() < np.array(trh)[:,1].min()  # indices of inverse relations must be higher
+        return (hrt, trh)
 
-    def _add_item(self, obj2num, num2obj, item):
-        count = len(obj2num)
-        obj2num[item] = count
-        num2obj[count] = item
+    def get_data(self, data, mode='eval'):
+        if mode == 'train':
+            out = self.data[data] + self.data[f'inv_{data}'] if self.include_reverse else self.data[data]
+        else:
+            out = self.data[data] + self.data[f'inv_{data}']  
+        with open(os.path.join(self.option.this_expsdir, f"{data}_log.txt"), "a+", encoding='UTF-8') as f:
+            f.write(f"{data} data contains {len(out)} triples\n")
+        return np.array(out, dtype=np.int64)
 
-    def get_train_graph_data(self):
+    def get_graph_data(self):
         with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Train graph contains " + str(len(self.train_data)) + " triples\n")
-        return np.array(self.train_data, dtype=np.int64)
-
-    def get_train_data(self):
-        with open(os.path.join(self.option.this_expsdir, "train_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Train data contains " + str(len(self.train_data)) + " triples\n")
-        return np.array(self.train_data, dtype=np.int64)
-
-    def get_test_graph_data(self):
-        with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Test graph contains " + str(len(self.train_data)) + " triples\n")
-        return np.array(self.train_data, dtype=np.int64)
-
-    def get_test_data(self):
-        with open(os.path.join(self.option.this_expsdir, "test_log.txt"), "a+", encoding='UTF-8') as f:
-            f.write("Test graph contains " + str(len(self.test_data)) + " triples\n")
-        return np.array(self.test_data, dtype=np.int64)
+            f.write("Graph contains " + str(len(self.data['train'] + self.data['inv_train'])) + " triples\n")
+        return np.array(self.data['train'] + self.data['inv_train'], dtype=np.int64)
